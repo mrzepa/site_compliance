@@ -7,7 +7,7 @@ from vet_compliance.cache import load_targets_cache, write_targets_cache
 from vet_compliance.compliance.engine import ComplianceEngine
 from vet_compliance.config import load_app_config, load_yaml
 from vet_compliance.connectors.meraki import collect_meraki_targets
-from vet_compliance.connectors.unifi import collect_unifi_targets
+from vet_compliance.connectors.unifi import collapse_unifi_site_targets, collect_unifi_targets
 from vet_compliance.exceptions import apply_exceptions
 from vet_compliance.reporting.writers import write_reports
 
@@ -45,9 +45,10 @@ def main() -> None:
             write_targets_cache(cache_path, targets)
             logger.info("Wrote %s collected targets to cache %s.", len(targets), cache_path)
     targets = apply_exceptions(targets, config)
+    targets = collapse_unifi_site_targets(targets)
     report = ComplianceEngine(rules).audit(targets)
     paths = write_reports(report, config["audit"]["output_dir"])
-    print(f"Audited {report.total_devices} devices. Compliance: {report.compliance_percent}%")
+    print(f"Audited {report.total_devices} targets. Compliance: {report.compliance_percent}%")
     print(f"Findings: {len(report.findings)}")
     for name, path in paths.items():
         print(f"{name}: {path}")

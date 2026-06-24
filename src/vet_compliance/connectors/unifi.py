@@ -203,38 +203,86 @@ def _collect_site(client: UnifiClient, site: dict[str, Any]) -> list[AuditTarget
     port_profiles = client.resource("portconf", site)
     radius_profiles = client.resource("radiusprofile", site)
     ap_groups = client.resource("apgroups", site) if "apgroups" in RESOURCE_ENDPOINTS else []
+    _normalize_unifi_networks(networks)
     _enrich_unifi_names(networks, settings, wlan_conf, port_profiles, radius_profiles, ap_groups)
     dns_settings = _dns_from_networks(networks)
     site_name = site.get("desc") or site.get("name") or "unknown"
-    targets: list[AuditTarget] = []
-    for device in devices:
-        device_type = "switch" if str(device.get("type", "")).lower() in {"usw", "switch"} else str(device.get("type", "unknown"))
-        if device_type != "switch":
-            continue
-        ctx = DeviceContext(
-            platform="unifi",
-            controller=client.name,
-            site_id=site.get("_id") or site.get("id"),
-            site_name=site_name,
-            device_id=device.get("mac") or device.get("_id"),
-            device_name=device.get("name") or device.get("hostname") or device.get("mac") or "unknown",
-            device_type=device_type,
-            raw_device=device,
+    switch = _representative_switch(devices)
+    if switch is None:
+        return []
+    ctx = DeviceContext(
+        platform="unifi",
+        controller=client.name,
+        site_id=site.get("_id") or site.get("id"),
+        site_name=site_name,
+        device_id=site.get("_id") or site.get("id") or site.get("name"),
+        device_name="Site settings",
+        device_type="site",
+        raw_device=switch,
+    )
+    return [
+        AuditTarget(
+            context=ctx,
+            sections={
+                "vlans": networks,
+                "dns_settings": dns_settings,
+                "wifi_settings": wlan_conf,
+                "port_profiles": port_profiles,
+                "radius_profiles": radius_profiles,
+                "settings": settings,
+            },
         )
-        targets.append(
+    ]
+
+
+def collapse_unifi_site_targets(targets: list[AuditTarget]) -> list[AuditTarget]:
+    collapsed: list[AuditTarget] = []
+    seen_sites: set[tuple[str | None, str | None, str]] = set()
+    for target in targets:
+        if target.context.platform != "unifi":
+            collapsed.append(target)
+            continue
+        site_key = (target.context.controller, target.context.site_id, target.context.site_name)
+        if site_key in seen_sites:
+            continue
+        seen_sites.add(site_key)
+        collapsed.append(
             AuditTarget(
-                context=ctx,
-                sections={
-                    "vlans": networks,
-                    "dns_settings": dns_settings,
-                    "wifi_settings": wlan_conf,
-                    "port_profiles": port_profiles,
-                    "radius_profiles": radius_profiles,
-                    "settings": settings,
-                },
+                context=DeviceContext(
+                    platform=target.context.platform,
+                    controller=target.context.controller,
+                    site_id=target.context.site_id,
+                    site_name=target.context.site_name,
+                    device_id=target.context.site_id or target.context.site_name,
+                    device_name="Site settings",
+                    device_type="site",
+                    raw_device=target.context.raw_device,
+                ),
+                sections=target.sections,
             )
         )
-    return targets
+    return collapsed
+
+
+def _representative_switch(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    switches = [
+        device
+        for device in devices
+        if str(device.get("type", "")).lower() in {"usw", "switch"}
+    ]
+    if not switches:
+        return None
+    return next((device for device in switches if _device_management_ip(device)), switches[0])
+
+
+def _device_management_ip(device: dict[str, Any]) -> str | None:
+    for key in ("ip", "last_ip", "fixed_ip", "connect_request_ip"):
+        if device.get(key):
+            return device[key]
+    for entry in device.get("network_table") or []:
+        if isinstance(entry, dict) and entry.get("ip"):
+            return entry["ip"]
+    return None
 
 
 def _enrich_unifi_names(
@@ -267,3 +315,14 @@ def _dns_from_networks(networks: list[dict[str, Any]]) -> dict[str, Any]:
             if key in network and key not in merged:
                 merged[key] = network[key]
     return merged
+
+
+def _normalize_unifi_networks(networks: list[dict[str, Any]]) -> None:
+    for network in networks:
+        trusted_servers = [
+            network[key]
+            for key in ("dhcpd_ip_1", "dhcpd_ip_2", "dhcpd_ip_3", "dhcpd_ip_4")
+            if network.get(key)
+        ]
+        if trusted_servers and "dhcpguard_server" not in network:
+            network["dhcpguard_server"] = trusted_servers

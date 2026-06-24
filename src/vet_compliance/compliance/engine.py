@@ -155,7 +155,7 @@ class ComplianceEngine:
                 findings.append(self._finding(target, section, f"Missing expected {section} item {item_key}", expected=expected))
                 continue
             for field, expected_value in expected.items():
-                actual_value = _get_path(observed, field)
+                actual_value = self._actual_field_value(observed, field)
                 if field == key:
                     valid, actual_display = str(actual_value) == str(expected_value), actual_value
                 else:
@@ -198,6 +198,19 @@ class ComplianceEngine:
                 if item_key not in expected_by_key and item_key not in ignored_items:
                     findings.append(self._finding(target, section, f"Unexpected {section} item {item_key}", actual=observed))
         return findings
+
+    @staticmethod
+    def _actual_field_value(observed: dict[str, Any], field: str) -> Any:
+        actual_value = _get_path(observed, field)
+        if actual_value is None and field == "dhcpguard_server":
+            trusted_servers = [
+                observed[key]
+                for key in ("dhcpd_ip_1", "dhcpd_ip_2", "dhcpd_ip_3", "dhcpd_ip_4")
+                if observed.get(key)
+            ]
+            if trusted_servers:
+                return trusted_servers
+        return actual_value
 
     def _audit_required(self, target: AuditTarget, section: str, required: dict[str, Any], actual: Any) -> list[Finding]:
         actual_dict = actual if isinstance(actual, dict) else {}

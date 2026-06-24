@@ -246,6 +246,42 @@ def test_unifi_dhcp_guard_can_reference_meraki_vlan_interface_ip():
     assert report.findings == []
 
 
+def test_unifi_dhcp_guard_can_use_unifi_dhcpd_ip_fields():
+    rules = {
+        "profiles": {
+            "meraki": {"platform": "meraki", "checks": {}},
+            "unifi": {
+                "platform": "unifi",
+                "checks": {
+                    "vlans": {
+                        "key": "vlan",
+                        "items": [
+                            {
+                                "vlan": 100,
+                                "dhcpguard_server": {"$meraki_vlan_interface_ip": 100},
+                            }
+                        ],
+                    }
+                },
+            },
+        },
+        "assignments": [
+            {"profile": "meraki", "platform": "meraki"},
+            {"profile": "unifi", "platform": "unifi"},
+        ],
+    }
+    meraki = AuditTarget(
+        context=DeviceContext("meraki", "dashboard", "n1", "Clinic A", "d1", "MX", "appliance"),
+        sections={"vlans": [{"id": "100", "applianceIp": "10.30.1.1"}]},
+    )
+    unifi = AuditTarget(
+        context=DeviceContext("unifi", "controller", "s1", "Clinic A", "d2", "Switch", "switch"),
+        sections={"vlans": [{"vlan": 100, "dhcpd_ip_1": "10.30.1.1"}]},
+    )
+    report = ComplianceEngine(rules).audit([unifi, meraki])
+    assert report.findings == []
+
+
 def test_meraki_interface_reference_finding_splits_expected_and_actual():
     rules = {
         "profiles": {

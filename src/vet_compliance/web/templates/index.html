@@ -49,8 +49,8 @@
   </header>
   <main>
     <section class="stats">
-      <div class="stat"><div class="label">Device Compliance</div><div class="value">{{ report.compliance_percent }}%</div><div class="hint">{{ report.compliant_devices }} of {{ report.total_devices }} devices compliant</div></div>
-      <div class="stat"><div class="label">Audited Devices</div><div class="value">{{ report.total_devices }}</div><div class="hint">{{ report.noncompliant_devices }} devices with findings</div></div>
+      <div class="stat"><div class="label">Target Compliance</div><div class="value">{{ report.compliance_percent }}%</div><div class="hint">{{ report.compliant_devices }} of {{ report.total_devices }} targets compliant</div></div>
+      <div class="stat"><div class="label">Audited Targets</div><div class="value">{{ report.total_devices }}</div><div class="hint">{{ report.noncompliant_devices }} targets with findings</div></div>
       <div class="stat"><div class="label">Site Compliance</div><div class="value">{{ report.site_compliance_percent }}%</div><div class="hint">{{ report.compliant_sites }} of {{ report.total_sites }} sites compliant</div></div>
       <div class="stat"><div class="label">Audited Sites</div><div class="value">{{ report.total_sites }}</div><div class="hint">{{ report.noncompliant_sites }} sites with findings</div></div>
       <div class="stat"><div class="label">Findings</div><div class="value">{{ report.findings | length }}</div><div class="hint">Noncompliant checks in this report</div></div>
