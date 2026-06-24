@@ -1,0 +1,31 @@
+[project]
+name = "vet-compliance"
+version = "0.1.0"
+description = "Read-only compliance auditing for UniFi switches and Meraki firewalls."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "jinja2>=3.1.0",
+  "meraki>=1.48.0",
+  "pyotp>=2.9.0",
+  "python-dotenv>=1.0.0",
+  "pyyaml>=6.0.0",
+  "requests>=2.32.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+]
+
+[project.scripts]
+vet-compliance = "vet_compliance.cli:main"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

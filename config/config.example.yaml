@@ -1,0 +1,63 @@
+# Copy this file to config/config.yaml and keep secrets in .env.
+audit:
+  output_dir: reports
+  workers:
+    controllers: 4
+    sites_per_controller: 12
+    meraki_networks: 8
+  request_timeout_seconds: 20
+  verify_tls: false
+  cache:
+    # off: always collect live data
+    # read: use cache when present, otherwise collect live data and write cache
+    # refresh: always collect live data and overwrite cache
+    mode: "off"
+    path: cache/target_cache.json
+
+unifi:
+  enabled: true
+  controllers:
+    - name: controller-a
+      base_url: https://192.0.2.10:8443
+      # Optional. If set, the value of this env var is sent as X-API-KEY.
+      # api_key_env: UNIFI_CONTROLLER_A_API_KEY
+      username_env: UNIFI_USERNAME
+      password_env: UNIFI_PASSWORD
+      mfa_secret_env: UNIFI_MFA_SECRET
+      include_sites: []
+      exclude_sites: []
+      # Useful while testing to avoid walking every site on the controller.
+      max_sites:
+
+meraki:
+  enabled: true
+  api_key_env: MERAKI_DASHBOARD_API_KEY
+  org_ids: []
+  include_networks: []
+  exclude_networks: []
+  # Useful while testing to avoid walking the full Dashboard org.
+  max_networks:
+  # Meraki documents a 10 requests/second/org limit; 8 leaves room for retries and pagination.
+  requests_per_second_per_org: 8
+  # Fallback pacing if requests_per_second_per_org is blank.
+  request_pause_seconds: 0.3
+  # Extra script-level 429 handling around the Meraki SDK's own retry behavior.
+  rate_limit_wait_seconds: 60
+  rate_limit_retries: 5
+  sdk_maximum_retries: 2
+  sdk_4xx_retry_wait_seconds: 5
+  sdk_429_retry_wait_seconds: 5
+
+exceptions:
+  ignored_sites:
+    # Exact site/network name:
+    # - "Lab Site"
+    # Regex with optional platform:
+    # - platform: unifi
+    #   regex: ".*LAB.*"
+  ignored_devices:
+    # Exact device name:
+    # - "LAB-SWITCH-01"
+    # Regex with optional platform:
+    # - platform: meraki
+    #   regex: ".*-LAB-.*"

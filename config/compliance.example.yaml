@@ -1,0 +1,82 @@
+version: 1
+defaults:
+  strict: true
+
+x_dns_sets:
+  unifi_corporate: &unifi_corporate_dns
+    dhcpd_dns_1: 10.10.2.10
+    dhcpd_dns_2: 10.10.2.11
+  unifi_voice: &unifi_voice_dns
+    dhcpd_dns_1: 10.10.4.10
+    dhcpd_dns_2: 10.10.4.11
+  meraki_corporate: &meraki_corporate_dns
+    dnsNameservers: "10.10.2.10\n10.10.2.11"
+  meraki_voice: &meraki_voice_dns
+    dnsNameservers: "10.10.4.10\n10.10.4.11"
+
+profiles:
+  default_unifi_switch:
+    platform: unifi
+    device_types: ["switch"]
+    checks:
+      vlans:
+        strict: true
+        key: vlan
+        items:
+          - name: Management
+            vlan: 2
+            purpose: corporate
+            <<: *unifi_corporate_dns
+          - name: Secure
+            vlan: 3
+            purpose: corporate
+            <<: *unifi_corporate_dns
+          - name: Voice
+            vlan: 4
+            purpose: corporate
+            <<: *unifi_voice_dns
+      port_profiles:
+        strict: true
+        key: name
+        items:
+          - name: Trunk_Native
+            native_networkconf_name: Management
+          - name: VOICE-VOIP
+            voice_networkconf_name: Voice
+      radius_profiles:
+        strict: true
+        key: name
+        items:
+          - name: Default
+
+  default_meraki_firewall:
+    platform: meraki
+    device_types: ["appliance"]
+    checks:
+      vlans:
+        strict: true
+        key: id
+        items:
+          - id: "2"
+            name: Management
+            subnet: 10.10.2.0/24
+            <<: *meraki_corporate_dns
+          - id: "3"
+            name: Secure
+            subnet: 10.10.3.0/24
+            <<: *meraki_corporate_dns
+          - id: "4"
+            name: Voice
+            subnet: 10.10.4.0/24
+            <<: *meraki_voice_dns
+      dhcp_options:
+        required:
+          dhcpHandling: Run a DHCP server
+
+assignments:
+  - profile: default_unifi_switch
+    platform: unifi
+    site_name_regex: ".*"
+  - profile: default_meraki_firewall
+    platform: meraki
+    network_name_regex: ".*"

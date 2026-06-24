@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vet Compliance</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; color: #1f2933; background: #f6f8fa; }
+    header { background: #18202a; color: white; padding: 18px 28px; }
+    h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: 0; }
+    header div { color: #cbd5e1; font-size: 13px; }
+    main { padding: 22px 28px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .stat, .table-wrap { background: white; border: 1px solid #d9e2ec; border-radius: 6px; }
+    .stat { padding: 14px; }
+    .label { font-size: 12px; color: #64748b; text-transform: uppercase; }
+    .value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+    .hint { color: #64748b; font-size: 12px; margin-top: 4px; line-height: 1.35; }
+    input, select, button { width: 100%; border: 1px solid #b8c4d2; border-radius: 4px; background: white; color: #1f2933; font: inherit; min-height: 34px; padding: 6px 8px; }
+    button { cursor: pointer; background: #18202a; color: white; border-color: #18202a; padding-inline: 12px; }
+    .table-wrap { overflow: hidden; }
+    .table-meta { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(260px, 2fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #e5eaf0; color: #52616f; font-size: 13px; }
+    .table-meta button { width: auto; min-width: 72px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid #e5eaf0; text-align: left; vertical-align: top; font-size: 13px; }
+    th { background: #eef2f6; color: #243447; position: sticky; top: 0; z-index: 1; }
+    th button { background: transparent; border: 0; color: inherit; padding: 0; min-height: 0; text-align: left; font-weight: 700; }
+    .filter-row th { top: 35px; background: #f8fafc; padding-block: 6px; }
+    .filter-row select, .filter-row input { min-height: 30px; font-size: 12px; padding: 4px 6px; }
+    td { overflow-wrap: anywhere; }
+    code { white-space: pre-wrap; font-size: 12px; }
+    .pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 12px; }
+    .pager button { width: auto; min-width: 72px; }
+    .pager select { width: auto; }
+    .empty { padding: 26px 12px; text-align: center; color: #64748b; }
+    @media (max-width: 1100px) {
+      .table-meta { grid-template-columns: 1fr; }
+      table { min-width: 980px; }
+      .table-scroll { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Vet Compliance</h1>
+    <div>{{ report_path }}</div>
+  </header>
+  <main>
+    <section class="stats">
+      <div class="stat"><div class="label">Device Compliance</div><div class="value">{{ report.compliance_percent }}%</div><div class="hint">{{ report.compliant_devices }} of {{ report.total_devices }} devices compliant</div></div>
+      <div class="stat"><div class="label">Audited Devices</div><div class="value">{{ report.total_devices }}</div><div class="hint">{{ report.noncompliant_devices }} devices with findings</div></div>
+      <div class="stat"><div class="label">Site Compliance</div><div class="value">{{ report.site_compliance_percent }}%</div><div class="hint">{{ report.compliant_sites }} of {{ report.total_sites }} sites compliant</div></div>
+      <div class="stat"><div class="label">Audited Sites</div><div class="value">{{ report.total_sites }}</div><div class="hint">{{ report.noncompliant_sites }} sites with findings</div></div>
+      <div class="stat"><div class="label">Findings</div><div class="value">{{ report.findings | length }}</div><div class="hint">Noncompliant checks in this report</div></div>
+    </section>
+    <section class="table-wrap">
+      <div class="table-meta">
+        <div id="result-count">0 findings</div>
+        <input id="q" type="search" placeholder="Search site, device, finding, expected, found">
+        <div id="sort-label">Sorted by site</div>
+        <button id="clear" type="button">Clear</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 8%"><button type="button" data-sort="platform">Platform</button></th>
+              <th style="width: 18%"><button type="button" data-sort="site">Site</button></th>
+              <th style="width: 15%"><button type="button" data-sort="device">Device</button></th>
+              <th style="width: 10%"><button type="button" data-sort="section">Section</button></th>
+              <th style="width: 20%"><button type="button" data-sort="message">Finding</button></th>
+              <th style="width: 14%">Expected</th>
+              <th style="width: 15%">Found</th>
+            </tr>
+            <tr class="filter-row">
+              <th><select id="platform"><option value="">All platforms</option></select></th>
+              <th><select id="site"><option value="">All sites</option></select></th>
+              <th><select id="device"><option value="">All devices</option></select></th>
+              <th><select id="section"><option value="">All sections</option></select></th>
+              <th><input id="message" type="search" placeholder="Filter findings"></th>
+              <th><input id="expected" type="search" placeholder="Filter expected"></th>
+              <th><input id="found" type="search" placeholder="Filter found"></th>
+            </tr>
+          </thead>
+          <tbody id="findings-body"></tbody>
+        </table>
+      </div>
+      <div id="empty" class="empty" hidden>No findings match the current filters.</div>
+      <div class="pager">
+        <button id="prev" type="button">Previous</button>
+        <span id="page-label">Page 1 of 1</span>
+        <button id="next" type="button">Next</button>
+        <select id="page-size">
+          <option>25</option>
+          <option selected>50</option>
+          <option>100</option>
+          <option>250</option>
+        </select>
+      </div>
+    </section>
+  </main>
+  <script id="report-data" type="application/json">{{ report.findings | tojson }}</script>
+  <script>
+    const findings = JSON.parse(document.getElementById("report-data").textContent);
+    const state = { page: 1, pageSize: 50, sortKey: "site", sortDir: "asc" };
+    const selectFields = ["platform", "site", "device", "section"];
+    const textFields = ["message", "expected", "found"];
+    const els = {
+      q: document.getElementById("q"),
+      body: document.getElementById("findings-body"),
+      empty: document.getElementById("empty"),
+      count: document.getElementById("result-count"),
+      sort: document.getElementById("sort-label"),
+      prev: document.getElementById("prev"),
+      next: document.getElementById("next"),
+      page: document.getElementById("page-label"),
+      pageSize: document.getElementById("page-size"),
+      clear: document.getElementById("clear")
+    };
+
+    function text(value) {
+      if (value === null || value === undefined) return "";
+      if (typeof value === "object") return JSON.stringify(value);
+      return String(value);
+    }
+
+    function display(finding, key) {
+      if (key === "expected") return finding.expected_text || text(finding.expected);
+      if (key === "found") return finding.found_text || text(finding.actual);
+      return text(finding[key]);
+    }
+
+    function populateSelect(id, values) {
+      const el = document.getElementById(id);
+      for (const value of values) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        el.appendChild(option);
+      }
+      el.addEventListener("change", () => { state.page = 1; render(); });
+    }
+
+    for (const field of selectFields) {
+      const values = [...new Set(findings.map(f => display(f, field)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      populateSelect(field, values);
+    }
+    for (const field of textFields) {
+      document.getElementById(field).addEventListener("input", () => { state.page = 1; render(); });
+    }
+
+    function filtered() {
+      const query = els.q.value.trim().toLowerCase();
+      return findings.filter(finding => {
+        for (const field of selectFields) {
+          const selected = document.getElementById(field).value;
+          if (selected && display(finding, field) !== selected) return false;
+        }
+        for (const field of textFields) {
+          const term = document.getElementById(field).value.trim().toLowerCase();
+          if (term && !display(finding, field).toLowerCase().includes(term)) return false;
+        }
+        if (!query) return true;
+        return ["platform", "site", "device", "section", "message", "expected", "found"]
+          .some(key => display(finding, key).toLowerCase().includes(query));
+      });
+    }
+
+    function sorted(rows) {
+      return [...rows].sort((a, b) => {
+        const av = display(a, state.sortKey);
+        const bv = display(b, state.sortKey);
+        const result = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+        return state.sortDir === "asc" ? result : -result;
+      });
+    }
+
+    function render() {
+      const rows = sorted(filtered());
+      const pages = Math.max(1, Math.ceil(rows.length / state.pageSize));
+      state.page = Math.min(state.page, pages);
+      const start = (state.page - 1) * state.pageSize;
+      const pageRows = rows.slice(start, start + state.pageSize);
+      els.body.textContent = "";
+      for (const finding of pageRows) {
+        const tr = document.createElement("tr");
+        for (const key of ["platform", "site", "device", "section", "message", "expected", "found"]) {
+          const td = document.createElement("td");
+          if (key === "expected" || key === "found") {
+            const code = document.createElement("code");
+            code.textContent = display(finding, key);
+            td.appendChild(code);
+          } else {
+            td.textContent = display(finding, key);
+          }
+          tr.appendChild(td);
+        }
+        els.body.appendChild(tr);
+      }
+      els.empty.hidden = rows.length !== 0;
+      els.count.textContent = `${rows.length.toLocaleString()} of ${findings.length.toLocaleString()} findings`;
+      els.page.textContent = `Page ${state.page} of ${pages}`;
+      els.prev.disabled = state.page <= 1;
+      els.next.disabled = state.page >= pages;
+      els.sort.textContent = `Sorted by ${state.sortKey} ${state.sortDir}`;
+    }
+
+    els.q.addEventListener("input", () => { state.page = 1; render(); });
+    els.pageSize.addEventListener("change", () => {
+      state.pageSize = Number(els.pageSize.value);
+      state.page = 1;
+      render();
+    });
+    els.prev.addEventListener("click", () => { state.page -= 1; render(); });
+    els.next.addEventListener("click", () => { state.page += 1; render(); });
+    els.clear.addEventListener("click", () => {
+      els.q.value = "";
+      for (const field of selectFields) document.getElementById(field).value = "";
+      for (const field of textFields) document.getElementById(field).value = "";
+      state.page = 1;
+      render();
+    });
+    document.querySelectorAll("th button[data-sort]").forEach(button => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.sort;
+        if (state.sortKey === key) {
+          state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        } else {
+          state.sortKey = key;
+          state.sortDir = "asc";
+        }
+        state.page = 1;
+        render();
+      });
+    });
+    render();
+  </script>
+</body>
+</html>

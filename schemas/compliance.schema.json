@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Vet Compliance Rules",
+  "type": "object",
+  "required": ["version", "profiles"],
+  "properties": {
+    "version": {"type": "integer"},
+    "defaults": {
+      "type": "object",
+      "properties": {"strict": {"type": "boolean"}}
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["platform", "checks"],
+        "properties": {
+          "platform": {"enum": ["unifi", "meraki"]},
+          "device_types": {"type": "array", "items": {"type": "string"}},
+          "checks": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "strict": {"type": "boolean"},
+                "key": {"type": "string"},
+                "items": {"type": "array", "items": {"type": "object"}},
+                "required": {"type": "object"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "assignments": {"type": "array", "items": {"type": "object"}}
+  }
+}
+

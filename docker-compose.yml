@@ -1,0 +1,25 @@
+services:
+  auditor:
+    build:
+      context: .
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    env_file: .env
+    volumes:
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./reports:/app/reports
+    command: ["python", "-m", "vet_compliance.cli", "--config", "config/config.yaml", "--rules", "config/compliance.yaml"]
+
+  web:
+    build:
+      context: .
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    env_file: .env
+    volumes:
+      - ./src:/app/src:ro
+      - ./reports:/app/reports:ro
+    ports:
+      - "8080:8000"
+    command: ["uvicorn", "vet_compliance.web.app:app", "--host", "0.0.0.0", "--port", "8000"]
