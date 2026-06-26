@@ -240,9 +240,13 @@ class ComplianceEngine:
         expected_value: Any,
     ) -> tuple[bool, Any]:
         if not isinstance(expected_value, dict):
+            if field == "name":
+                return self._case_insensitive_match(actual_value, expected_value), actual_value
             return _normalize(actual_value) == _normalize(expected_value), actual_value
         if "$one_of" in expected_value:
             allowed = expected_value["$one_of"]
+            if field == "name":
+                return any(self._case_insensitive_match(actual_value, item) for item in allowed), actual_value
             return actual_value in allowed, actual_value
         if "$present" in expected_value:
             return (actual_value not in (None, "", [], {})) == bool(expected_value["$present"]), actual_value
@@ -315,6 +319,12 @@ class ComplianceEngine:
         if any(option.get("value") != value for option in matches):
             return False, matches
         return True, matches
+
+    @staticmethod
+    def _case_insensitive_match(actual_value: Any, expected_value: Any) -> bool:
+        if isinstance(actual_value, str) and isinstance(expected_value, str):
+            return actual_value.strip().casefold() == expected_value.strip().casefold()
+        return _normalize(actual_value) == _normalize(expected_value)
 
     @staticmethod
     def _all_assignment_ips_in_subnet(actual_value: Any, subnet: str | None) -> tuple[bool, Any]:

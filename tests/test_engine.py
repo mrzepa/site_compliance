@@ -44,6 +44,50 @@ def test_strict_items_can_ignore_known_extra_vlan():
     assert report.findings == []
 
 
+def test_vlan_name_comparison_is_case_insensitive():
+    rules = {
+        "profiles": {
+            "p": {
+                "platform": "unifi",
+                "checks": {"vlans": {"key": "vlan", "items": [{"vlan": 2, "name": "Management"}]}},
+            }
+        },
+    }
+    target = AuditTarget(
+        context=DeviceContext("unifi", "c", "s1", "Site", "d1", "Switch", "switch"),
+        sections={"vlans": [{"vlan": 2, "name": "management"}]},
+    )
+    report = ComplianceEngine(rules).audit([target])
+    assert report.findings == []
+
+
+def test_vlan_name_one_of_comparison_is_case_insensitive():
+    rules = {
+        "profiles": {
+            "p": {
+                "platform": "unifi",
+                "checks": {
+                    "vlans": {
+                        "key": "vlan",
+                        "items": [
+                            {
+                                "vlan": 99,
+                                "name": {"$one_of": ["Trunk Native", "Trunk_Native"]},
+                            }
+                        ],
+                    }
+                },
+            }
+        },
+    }
+    target = AuditTarget(
+        context=DeviceContext("unifi", "c", "s1", "Site", "d1", "Switch", "switch"),
+        sections={"vlans": [{"vlan": 99, "name": "trunk_native"}]},
+    )
+    report = ComplianceEngine(rules).audit([target])
+    assert report.findings == []
+
+
 def test_dhcp_option_operator_matches_option_15():
     rules = {
         "profiles": {
