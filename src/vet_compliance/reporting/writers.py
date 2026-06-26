@@ -18,7 +18,7 @@ def write_reports(report: AuditReport, output_dir: str | Path) -> dict[str, Path
     summary_path = out / "summary.json"
 
     finding_rows = []
-    for finding in report.findings:
+    for finding in sorted(report.findings, key=_finding_sort_key):
         row = asdict(finding)
         row["expected_text"] = format_value(row["expected"], row.get("path"), expected=True)
         row["found_text"] = format_value(row["actual"], row.get("path"), expected=False)
@@ -52,6 +52,17 @@ def write_reports(report: AuditReport, output_dir: str | Path) -> dict[str, Path
     return {"json": json_path, "csv": csv_path, "summary": summary_path}
 
 
+def _finding_sort_key(finding) -> tuple[str, str, str, str, str, str]:
+    return (
+        finding.platform or "",
+        finding.site or "",
+        finding.device or "",
+        finding.section or "",
+        finding.path or "",
+        finding.message or "",
+    )
+
+
 def format_value(value: Any, path: str | None = None, expected: bool = False) -> str:
     if value is None:
         return "Not found" if not expected else ""
@@ -60,6 +71,8 @@ def format_value(value: Any, path: str | None = None, expected: bool = False) ->
     field = (path or "").split(".")[-1]
     vlan_id = _vlan_id_from_path(path)
     if isinstance(value, dict):
+        if field == "offline_devices":
+            return _format_offline_device(value)
         if "$dhcp_option" in value:
             option = value["$dhcp_option"]
             suffix = " only" if option.get("only") else ""
@@ -128,6 +141,14 @@ def _format_dhcp_option(option: Any) -> str:
     if option_type:
         return f"code {code} ({option_type}) value {value}"
     return f"code {code} value {value}"
+
+
+def _format_offline_device(device: dict[str, Any]) -> str:
+    name = device.get("name") or "unknown"
+    ip = device.get("ip") or "unknown"
+    last_seen = device.get("last_seen")
+    suffix = f", last seen {last_seen}" if last_seen else ""
+    return f"{name}, last reported IP {ip}{suffix}"
 
 
 def _format_dns(value: Any) -> str:

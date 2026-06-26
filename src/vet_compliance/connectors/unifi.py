@@ -169,7 +169,7 @@ def collect_unifi_targets(config: dict[str, Any]) -> list[AuditTarget]:
         futures = [executor.submit(_collect_controller, c, timeout, verify_tls, int(workers.get("sites_per_controller", 8))) for c in controllers]
         for future in as_completed(futures):
             targets.extend(future.result())
-    return targets
+    return sorted(targets, key=_target_sort_key)
 
 
 def _collect_controller(controller: dict[str, Any], timeout: int, verify_tls: bool, site_workers: int) -> list[AuditTarget]:
@@ -184,6 +184,7 @@ def _collect_controller(controller: dict[str, Any], timeout: int, verify_tls: bo
         and site.get("desc") not in exclude
         and site.get("name") not in exclude
     ]
+    sites = sorted(sites, key=_site_sort_key)
     if max_sites:
         sites = sites[: int(max_sites)]
     logger.info("Collecting UniFi data from %s sites on %s.", len(sites), client.name)
@@ -192,7 +193,7 @@ def _collect_controller(controller: dict[str, Any], timeout: int, verify_tls: bo
         futures = [executor.submit(_collect_site, client, site) for site in sites]
         for future in as_completed(futures):
             targets.extend(future.result())
-    return targets
+    return sorted(targets, key=_target_sort_key)
 
 
 def _collect_site(client: UnifiClient, site: dict[str, Any]) -> list[AuditTarget]:
@@ -208,6 +209,7 @@ def _collect_site(client: UnifiClient, site: dict[str, Any]) -> list[AuditTarget
     dns_settings = _dns_from_networks(networks)
     site_name = site.get("desc") or site.get("name") or "unknown"
     switch = _representative_switch(devices)
+    offline_switches = _offline_switches(devices)
     if switch is None:
         return []
     ctx = DeviceContext(
@@ -230,6 +232,7 @@ def _collect_site(client: UnifiClient, site: dict[str, Any]) -> list[AuditTarget
                 "port_profiles": port_profiles,
                 "radius_profiles": radius_profiles,
                 "settings": settings,
+                "offline_devices": offline_switches,
             },
         )
     ]
@@ -237,15 +240,19 @@ def _collect_site(client: UnifiClient, site: dict[str, Any]) -> list[AuditTarget
 
 def collapse_unifi_site_targets(targets: list[AuditTarget]) -> list[AuditTarget]:
     collapsed: list[AuditTarget] = []
-    seen_sites: set[tuple[str | None, str | None, str]] = set()
-    for target in targets:
+    unifi_sites: dict[tuple[str | None, str | None, str], list[AuditTarget]] = {}
+    for target in sorted(targets, key=_target_sort_key):
         if target.context.platform != "unifi":
             collapsed.append(target)
             continue
         site_key = (target.context.controller, target.context.site_id, target.context.site_name)
-        if site_key in seen_sites:
-            continue
-        seen_sites.add(site_key)
+        unifi_sites.setdefault(site_key, []).append(target)
+    for site_targets in unifi_sites.values():
+        target = site_targets[0]
+        representative = _representative_switch([item.context.raw_device for item in site_targets if item.context.raw_device]) or target.context.raw_device
+        offline_devices = _offline_switches([item.context.raw_device for item in site_targets if item.context.raw_device])
+        if not offline_devices:
+            offline_devices = target.sections.get("offline_devices", [])
         collapsed.append(
             AuditTarget(
                 context=DeviceContext(
@@ -256,12 +263,15 @@ def collapse_unifi_site_targets(targets: list[AuditTarget]) -> list[AuditTarget]
                     device_id=target.context.site_id or target.context.site_name,
                     device_name="Site settings",
                     device_type="site",
-                    raw_device=target.context.raw_device,
+                    raw_device=representative,
                 ),
-                sections=target.sections,
+                sections={
+                    **target.sections,
+                    "offline_devices": offline_devices,
+                },
             )
         )
-    return collapsed
+    return sorted(collapsed, key=_target_sort_key)
 
 
 def _representative_switch(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -272,7 +282,52 @@ def _representative_switch(devices: list[dict[str, Any]]) -> dict[str, Any] | No
     ]
     if not switches:
         return None
-    return next((device for device in switches if _device_management_ip(device)), switches[0])
+    switches = sorted(switches, key=_switch_sort_key)
+    return next((device for device in switches if _is_online(device) and _device_management_ip(device)), None) or next(
+        (device for device in switches if _is_online(device)),
+        None,
+    ) or next((device for device in switches if _device_management_ip(device)), switches[0])
+
+
+def _offline_switches(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        _offline_device_summary(device)
+        for device in sorted(devices, key=_switch_sort_key)
+        if str(device.get("type", "")).lower() in {"usw", "switch"} and not _is_online(device)
+    ]
+
+
+def _offline_device_summary(device: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": device.get("name") or device.get("hostname") or device.get("mac") or "unknown",
+        "ip": _device_management_ip(device),
+        "last_seen": device.get("disconnected_at") or device.get("last_seen") or device.get("last_seen_at"),
+    }
+
+
+def _is_online(device: dict[str, Any]) -> bool:
+    if device.get("state") is not None:
+        return int(device.get("state") or 0) == 1
+    if device.get("disconnected_at") or device.get("start_disconnected_millis"):
+        return False
+    return bool(device.get("connected_at") or device.get("ip"))
+
+
+def _site_sort_key(site: dict[str, Any]) -> tuple[str, str, str]:
+    return (str(site.get("desc") or ""), str(site.get("name") or ""), str(site.get("_id") or site.get("id") or ""))
+
+
+def _switch_sort_key(device: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(_device_management_ip(device) or ""),
+        str(device.get("name") or device.get("hostname") or ""),
+        str(device.get("mac") or device.get("_id") or ""),
+    )
+
+
+def _target_sort_key(target: AuditTarget) -> tuple[str, str, str, str]:
+    ctx = target.context
+    return (ctx.platform, ctx.site_name or "", ctx.device_name or "", ctx.device_id or "")
 
 
 def _device_management_ip(device: dict[str, Any]) -> str | None:

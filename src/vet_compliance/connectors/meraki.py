@@ -36,7 +36,7 @@ class MerakiCallGuard:
                 return func()
             except APIError as exc:
                 if _is_rate_limited(exc):
-                    wait = self._retry_after(exc) or self.rate_limit_wait_seconds
+                    wait = _retry_after(exc) or self.rate_limit_wait_seconds
                     logger.warning("Meraki rate limit while calling %s; sleeping %.1fs (attempt %s/%s).", description, wait, attempt, self.max_retries)
                     time.sleep(wait)
                     continue
@@ -97,7 +97,7 @@ def collect_meraki_targets(config: dict[str, Any]) -> list[AuditTarget]:
     exclude = set(meraki_config.get("exclude_networks") or [])
     max_networks = meraki_config.get("max_networks")
     networks: list[dict[str, Any]] = []
-    for org in orgs:
+    for org in sorted(orgs, key=lambda item: str(item.get("id") or item.get("name") or "")):
         if org_filter and org["id"] not in org_filter:
             continue
         org_id = org["id"]
@@ -107,7 +107,7 @@ def collect_meraki_targets(config: dict[str, Any]) -> list[AuditTarget]:
             default=[],
             scope=org_id,
         )
-        for network in org_networks:
+        for network in sorted(org_networks, key=_network_sort_key):
             if include and network.get("name") not in include and network.get("id") not in include:
                 continue
             if network.get("name") in exclude or network.get("id") in exclude:
@@ -127,18 +127,26 @@ def collect_meraki_targets(config: dict[str, Any]) -> list[AuditTarget]:
         for index, network in enumerate(networks, start=1):
             logger.info("Collecting Meraki network %s/%s: %s", index, len(networks), network.get("name") or network["id"])
             targets.extend(_collect_network(dashboard, guard, network))
-        return targets
+        return sorted(targets, key=_target_sort_key)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_collect_network, dashboard, guard, network) for network in networks]
         for future in as_completed(futures):
             targets.extend(future.result())
-    return targets
+    return sorted(targets, key=_target_sort_key)
+
+
+def filter_meraki_mx_targets(targets: list[AuditTarget]) -> list[AuditTarget]:
+    return [target for target in targets if target.context.platform != "meraki" or _is_mx_device(target.context.raw_device or {})]
 
 
 def _collect_network(dashboard: meraki.DashboardAPI, guard: MerakiCallGuard, network: dict[str, Any]) -> list[AuditTarget]:
     network_id = network["id"]
     org_id = str(network.get("organizationId") or "global")
     devices = guard.call(f"network {network_id} devices", lambda: dashboard.networks.getNetworkDevices(network_id), default=[], scope=org_id)
+    device = _representative_appliance(devices)
+    if device is None:
+        logger.debug("Skipping Meraki network %s because it has no MX device.", network.get("name") or network_id)
+        return []
     vlans = guard.call(f"network {network_id} appliance VLANs", lambda: dashboard.appliance.getNetworkApplianceVlans(network_id), default=[], scope=org_id)
     firewall_settings = guard.call(
         f"network {network_id} appliance firewall settings",
@@ -153,36 +161,62 @@ def _collect_network(dashboard: meraki.DashboardAPI, guard: MerakiCallGuard, net
         scope=org_id,
     )
     _enrich_vlan_vpn_mode(vlans, vpn_settings)
-    targets: list[AuditTarget] = []
-    for device in devices:
-        model = device.get("model", "")
-        if not model.startswith("MX"):
-            continue
-        ctx = DeviceContext(
-            platform="meraki",
-            controller="Meraki Dashboard",
-            site_id=network_id,
-            site_name=network.get("name") or network_id,
-            device_id=device.get("serial"),
-            device_name=device.get("name") or device.get("serial") or model,
-            device_type="appliance",
-            raw_device=device,
+    model = device.get("model", "")
+    ctx = DeviceContext(
+        platform="meraki",
+        controller="Meraki Dashboard",
+        site_id=network_id,
+        site_name=network.get("name") or network_id,
+        device_id=device.get("serial") or network_id,
+        device_name=device.get("name") or device.get("serial") or model or "Network appliance settings",
+        device_type="appliance",
+        raw_device=device,
+    )
+    dns_settings = _first_vlan_dns(vlans)
+    dhcp_options = vlans[0] if vlans else {}
+    return [
+        AuditTarget(
+            context=ctx,
+            sections={
+                "vlans": vlans,
+                "dns_settings": dns_settings,
+                "dhcp_options": dhcp_options,
+                "firewall_settings": firewall_settings,
+                "vpn_settings": vpn_settings,
+            },
         )
-        dns_settings = _first_vlan_dns(vlans)
-        dhcp_options = vlans[0] if vlans else {}
-        targets.append(
-            AuditTarget(
-                context=ctx,
-                sections={
-                    "vlans": vlans,
-                    "dns_settings": dns_settings,
-                    "dhcp_options": dhcp_options,
-                    "firewall_settings": firewall_settings,
-                    "vpn_settings": vpn_settings,
-                },
-            )
-        )
-    return targets
+    ]
+
+
+def _representative_appliance(devices: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not devices:
+        return None
+    sorted_devices = sorted(devices, key=_device_sort_key)
+    for device in sorted_devices:
+        if _is_mx_device(device):
+            return device
+    return None
+
+
+def _is_mx_device(device: dict[str, Any]) -> bool:
+    return str(device.get("model") or "").upper().startswith("MX")
+
+
+def _network_sort_key(network: dict[str, Any]) -> tuple[str, str]:
+    return (str(network.get("name") or ""), str(network.get("id") or ""))
+
+
+def _device_sort_key(device: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(device.get("model") or ""),
+        str(device.get("name") or ""),
+        str(device.get("serial") or device.get("mac") or device.get("_id") or ""),
+    )
+
+
+def _target_sort_key(target: AuditTarget) -> tuple[str, str, str, str]:
+    ctx = target.context
+    return (ctx.platform, ctx.site_name or "", ctx.device_name or "", ctx.device_id or "")
 
 
 def _is_rate_limited(exc: APIError) -> bool:

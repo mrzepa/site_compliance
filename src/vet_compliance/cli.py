@@ -6,10 +6,15 @@ import logging
 from vet_compliance.cache import load_targets_cache, write_targets_cache
 from vet_compliance.compliance.engine import ComplianceEngine
 from vet_compliance.config import load_app_config, load_yaml
-from vet_compliance.connectors.meraki import collect_meraki_targets
+from vet_compliance.connectors.meraki import collect_meraki_targets, filter_meraki_mx_targets
 from vet_compliance.connectors.unifi import collapse_unifi_site_targets, collect_unifi_targets
 from vet_compliance.exceptions import apply_exceptions
 from vet_compliance.reporting.writers import write_reports
+
+
+def _target_sort_key(target):
+    ctx = target.context
+    return (ctx.platform, ctx.site_name or "", ctx.device_name or "", ctx.device_id or "")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,7 +36,10 @@ def main() -> None:
     cache_config = config.get("audit", {}).get("cache", {})
     cache_mode = args.cache_mode or cache_config.get("mode", "off")
     cache_path = cache_config.get("path", "cache/target_cache.json")
+    logger.info("Cache mode: %s; cache path: %s", cache_mode, cache_path)
     targets = load_targets_cache(cache_path) if cache_mode == "read" else None
+    if cache_mode == "read" and targets is None:
+        raise FileNotFoundError(f"Cache mode is read, but no target cache was found at {cache_path}")
     if targets is not None:
         logger.info("Loaded %s collected targets from cache %s.", len(targets), cache_path)
     else:
@@ -42,11 +50,19 @@ def main() -> None:
         targets.extend(collect_meraki_targets(config))
         targets.extend(collect_unifi_targets(config))
         if cache_mode in {"read", "refresh"}:
+            logger.info("Writing %s collected targets to cache %s.", len(targets), cache_path)
             write_targets_cache(cache_path, targets)
             logger.info("Wrote %s collected targets to cache %s.", len(targets), cache_path)
+    before_mx_filter = len(targets)
+    targets = filter_meraki_mx_targets(targets)
+    skipped_non_mx = before_mx_filter - len(targets)
+    if skipped_non_mx:
+        logger.info("Skipped %s cached/collected Meraki targets without an MX device.", skipped_non_mx)
+    reference_targets = list(targets)
     targets = apply_exceptions(targets, config)
     targets = collapse_unifi_site_targets(targets)
-    report = ComplianceEngine(rules).audit(targets)
+    targets = sorted(targets, key=_target_sort_key)
+    report = ComplianceEngine(rules).audit(targets, reference_targets=reference_targets)
     paths = write_reports(report, config["audit"]["output_dir"])
     print(f"Audited {report.total_devices} targets. Compliance: {report.compliance_percent}%")
     print(f"Findings: {len(report.findings)}")

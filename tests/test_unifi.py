@@ -27,8 +27,8 @@ def test_collect_site_returns_one_site_target_for_switch_settings():
             resources = {
                 "device": [
                     {"type": "uap", "name": "AP"},
-                    {"type": "usw", "name": "Switch A", "ip": "10.30.2.10"},
-                    {"type": "usw", "name": "Switch B", "ip": "10.30.2.11"},
+                    {"type": "usw", "name": "Switch A", "ip": "10.30.2.10", "state": 1},
+                    {"type": "usw", "name": "Switch B", "ip": "10.30.2.11", "state": 1},
                 ],
                 "networkconf": [{"vlan": 100, "name": "Secure"}],
                 "setting": [],
@@ -47,6 +47,31 @@ def test_collect_site_returns_one_site_target_for_switch_settings():
     assert targets[0].context.raw_device["ip"] == "10.30.2.10"
 
 
+def test_collect_site_prefers_online_switch_and_reports_offline_switches():
+    class Client:
+        name = "controller-a"
+
+        def resource(self, resource_name, site):
+            resources = {
+                "device": [
+                    {"type": "usw", "name": "Offline Switch", "ip": "10.30.2.50", "state": 0, "disconnected_at": 123},
+                    {"type": "usw", "name": "Online Switch", "ip": "10.30.2.10", "state": 1},
+                ],
+                "networkconf": [{"vlan": 100, "name": "Secure"}],
+                "setting": [],
+                "wlanconf": [],
+                "portconf": [],
+                "radiusprofile": [],
+                "apgroups": [],
+            }
+            return resources[resource_name]
+
+    targets = _collect_site(Client(), {"_id": "site-1", "desc": "Example Site"})
+
+    assert targets[0].context.raw_device["name"] == "Online Switch"
+    assert targets[0].sections["offline_devices"] == [{"name": "Offline Switch", "ip": "10.30.2.50", "last_seen": 123}]
+
+
 def test_collapse_unifi_site_targets_deduplicates_cached_switch_targets():
     first = AuditTarget(
         context=DeviceContext("unifi", "controller-a", "site-1", "Example Site", "switch-a", "Switch A", "switch", {"ip": "10.30.2.10"}),
@@ -61,3 +86,35 @@ def test_collapse_unifi_site_targets_deduplicates_cached_switch_targets():
 
     assert len(targets) == 1
     assert targets[0].context.device_name == "Site settings"
+    assert targets[0].context.raw_device["ip"] == "10.30.2.10"
+
+
+def test_collapse_unifi_site_targets_is_independent_of_input_order():
+    first = AuditTarget(
+        context=DeviceContext("unifi", "controller-a", "site-1", "Example Site", "switch-a", "Switch A", "switch", {"ip": "10.30.2.10"}),
+        sections={"vlans": [{"vlan": 100, "name": "Secure"}]},
+    )
+    second = AuditTarget(
+        context=DeviceContext("unifi", "controller-a", "site-1", "Example Site", "switch-b", "Switch B", "switch", {"ip": "10.30.2.11"}),
+        sections={"vlans": [{"vlan": 100, "name": "Secure"}]},
+    )
+
+    assert collapse_unifi_site_targets([first, second])[0].context.raw_device["ip"] == "10.30.2.10"
+    assert collapse_unifi_site_targets([second, first])[0].context.raw_device["ip"] == "10.30.2.10"
+
+
+def test_collapse_unifi_site_targets_prefers_online_switch_from_cached_targets():
+    offline = AuditTarget(
+        context=DeviceContext("unifi", "controller-a", "site-1", "Example Site", "switch-a", "Switch A", "switch", {"type": "usw", "name": "Offline", "ip": "10.20.76.6", "state": 0}),
+        sections={"vlans": [{"vlan": 100, "name": "Secure"}]},
+    )
+    online = AuditTarget(
+        context=DeviceContext("unifi", "controller-a", "site-1", "Example Site", "switch-b", "Switch B", "switch", {"type": "usw", "name": "Online", "ip": "172.16.48.10", "state": 1}),
+        sections={"vlans": [{"vlan": 100, "name": "Secure"}]},
+    )
+
+    target = collapse_unifi_site_targets([offline, online])[0]
+
+    assert target.context.raw_device["name"] == "Online"
+    assert target.context.raw_device["ip"] == "172.16.48.10"
+    assert target.sections["offline_devices"] == [{"name": "Offline", "ip": "10.20.76.6", "last_seen": None}]

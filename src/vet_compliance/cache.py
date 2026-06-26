@@ -19,8 +19,10 @@ def load_targets_cache(path: str | Path) -> list[AuditTarget] | None:
 def write_targets_cache(path: str | Path, targets: list[AuditTarget]) -> None:
     cache_path = Path(path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"targets": [_target_to_dict(target) for target in targets]}
-    cache_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    payload = {"targets": [_target_to_dict(target) for target in sorted(targets, key=_target_sort_key)]}
+    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    tmp_path.replace(cache_path)
 
 
 def _target_to_dict(target: AuditTarget) -> dict[str, Any]:
@@ -33,3 +35,8 @@ def _target_to_dict(target: AuditTarget) -> dict[str, Any]:
 def _target_from_dict(data: dict[str, Any]) -> AuditTarget:
     context = DeviceContext(**data["context"])
     return AuditTarget(context=context, sections=data.get("sections", {}))
+
+
+def _target_sort_key(target: AuditTarget) -> tuple[str, str, str, str]:
+    ctx = target.context
+    return (ctx.platform, ctx.site_name or "", ctx.device_name or "", ctx.device_id or "")

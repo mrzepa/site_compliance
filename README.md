@@ -57,7 +57,7 @@ Meraki rate limiting is org-scoped. The default leaves room under Meraki's docum
 
 ```yaml
 meraki:
-  requests_per_second_per_org: 8
+  requests_per_second_per_org: 6
   rate_limit_wait_seconds: 60
   rate_limit_retries: 5
 ```
@@ -276,7 +276,7 @@ audit:
   workers:
     meraki_networks: 8
 meraki:
-  requests_per_second_per_org: 8
+  requests_per_second_per_org: 6
 ```
 
 If Meraki throttles, lower `requests_per_second_per_org`.

@@ -36,11 +36,11 @@ class ComplianceEngine:
         self.assignments = rules.get("assignments", [])
         self.reference_data: dict[str, Any] = {}
 
-    def audit(self, targets: list[AuditTarget]) -> AuditReport:
+    def audit(self, targets: list[AuditTarget], reference_targets: list[AuditTarget] | None = None) -> AuditReport:
         findings: list[Finding] = []
         noncompliant = set()
         noncompliant_sites = set()
-        self.reference_data = self._build_reference_data(targets)
+        self.reference_data = self._build_reference_data(reference_targets or targets)
         site_keys_by_target = {id(target): self._physical_site_key(target) for target in targets}
         audited_sites = set(site_keys_by_target.values())
         for target in targets:
@@ -50,7 +50,7 @@ class ComplianceEngine:
             profile = self.profiles[profile_name]
             target_findings = self.audit_target(target, profile)
             findings.extend(target_findings)
-            if target_findings:
+            if any(finding.severity == "noncompliant" for finding in target_findings):
                 noncompliant.add((target.context.platform, target.context.site_name, target.context.device_name))
                 noncompliant_sites.add(site_keys_by_target[id(target)])
         compliant = max(len(targets) - len(noncompliant), 0)
@@ -75,6 +75,7 @@ class ComplianceEngine:
     def _build_reference_data(self, targets: list[AuditTarget]) -> dict[str, Any]:
         meraki_vlan_interfaces: dict[str, dict[str, str]] = {}
         meraki_vlan2_subnets: list[dict[str, Any]] = []
+        seen_vlan2_subnets: set[tuple[str, str]] = set()
         for target in targets:
             if target.context.platform != "meraki":
                 continue
@@ -89,11 +90,16 @@ class ComplianceEngine:
                     site_interfaces[str(vlan_id)] = interface_ip
                 if str(vlan_id) == "2" and vlan.get("subnet"):
                     try:
+                        network = ip_network(vlan["subnet"], strict=False)
+                        subnet_key = (site_key, str(network))
+                        if subnet_key in seen_vlan2_subnets:
+                            continue
+                        seen_vlan2_subnets.add(subnet_key)
                         meraki_vlan2_subnets.append(
                             {
                                 "site_key": site_key,
                                 "site_name": target.context.site_name,
-                                "network": ip_network(vlan["subnet"], strict=False),
+                                "network": network,
                             }
                         )
                     except ValueError:
@@ -127,6 +133,7 @@ class ComplianceEngine:
 
     def audit_target(self, target: AuditTarget, profile: dict[str, Any]) -> list[Finding]:
         findings: list[Finding] = []
+        findings.extend(self._audit_offline_devices(target))
         for section_name, check in profile.get("checks", {}).items():
             actual = target.sections.get(section_name)
             if actual is None:
@@ -138,14 +145,32 @@ class ComplianceEngine:
                 findings.extend(self._audit_required(target, section_name, check["required"], actual))
         return findings
 
+    def _audit_offline_devices(self, target: AuditTarget) -> list[Finding]:
+        findings: list[Finding] = []
+        for device in target.sections.get("offline_devices", []) or []:
+            name = device.get("name") or "unknown"
+            ip = device.get("ip") or "unknown"
+            findings.append(
+                self._finding(
+                    target,
+                    "offline_devices",
+                    f"Device {name} is offline; last reported IP {ip}; cannot validate against Meraki VLAN 2",
+                    expected="Device online with a current management IP",
+                    actual=device,
+                    path="offline_devices",
+                    severity="info",
+                )
+            )
+        return findings
+
     def _audit_items(self, target: AuditTarget, section: str, check: dict[str, Any], actual: Any) -> list[Finding]:
         key = check.get("key", "name")
         strict = check.get("strict", self.defaults.get("strict", True))
         expected_items = check.get("items", [])
-        ignored_items = {str(item) for item in check.get("ignore_items", [])}
+        ignored_items = {self._item_key(item, key) for item in check.get("ignore_items", [])}
         actual_items = actual if isinstance(actual, list) else []
-        expected_by_key = {str(item.get(key)): item for item in expected_items}
-        actual_by_key = {str(item.get(key)): item for item in actual_items if isinstance(item, dict) and item.get(key) is not None}
+        expected_by_key = {self._item_key(item.get(key), key): item for item in expected_items}
+        actual_by_key = {self._item_key(item.get(key), key): item for item in actual_items if isinstance(item, dict) and item.get(key) is not None}
         findings: list[Finding] = []
         missing_reference_sections: set[str] = set()
 
@@ -157,11 +182,13 @@ class ComplianceEngine:
             for field, expected_value in expected.items():
                 actual_value = self._actual_field_value(observed, field)
                 if field == key:
-                    valid, actual_display = str(actual_value) == str(expected_value), actual_value
+                    valid, actual_display = self._item_key(actual_value, key) == self._item_key(expected_value, key), actual_value
                 else:
                     valid, actual_display = self._matches_expected(target, observed, field, actual_value, expected_value)
                 if isinstance(actual_display, dict) and actual_display.get("__missing_reference__"):
-                    missing_reference_sections.add(actual_display.get("reference", "external reference data"))
+                    reference = actual_display.get("reference", "external reference data")
+                    if not self._reference_skip_is_explained_by_offline_device(target, reference):
+                        missing_reference_sections.add(reference)
                     continue
                 if not valid:
                     finding_expected = expected_value
@@ -198,6 +225,11 @@ class ComplianceEngine:
                 if item_key not in expected_by_key and item_key not in ignored_items:
                     findings.append(self._finding(target, section, f"Unexpected {section} item {item_key}", actual=observed))
         return findings
+
+    @staticmethod
+    def _item_key(value: Any, key: str) -> str:
+        text = str(value)
+        return text.casefold() if key == "name" else text
 
     @staticmethod
     def _actual_field_value(observed: dict[str, Any], field: str) -> Any:
@@ -290,6 +322,7 @@ class ComplianceEngine:
             for item in self.reference_data.get("meraki_vlan2_subnets", [])
             if address in item["network"]
         ]
+        matches = self._unique_meraki_subnet_matches(matches)
         if len(matches) == 1:
             return matches[0]["site_key"], None
         if len(matches) > 1:
@@ -298,8 +331,17 @@ class ComplianceEngine:
         return None, f"Meraki VLAN interface data; UniFi management IP {management_ip} did not match a Meraki VLAN 2 subnet"
 
     @staticmethod
+    def _unique_meraki_subnet_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in matches:
+            unique[(item["site_key"], str(item["network"]))] = item
+        return list(unique.values())
+
+    @staticmethod
     def _target_management_ip(target: AuditTarget) -> str | None:
         raw = target.context.raw_device or {}
+        if ComplianceEngine._raw_device_is_offline(raw):
+            return None
         for key in ("ip", "last_ip", "fixed_ip", "connect_request_ip"):
             if raw.get(key):
                 return raw[key]
@@ -307,6 +349,27 @@ class ComplianceEngine:
             if isinstance(entry, dict) and entry.get("ip"):
                 return entry["ip"]
         return None
+
+    @staticmethod
+    def _raw_device_is_offline(raw: dict[str, Any]) -> bool:
+        if raw.get("state") is not None:
+            try:
+                return int(raw.get("state") or 0) == 0
+            except (TypeError, ValueError):
+                return str(raw.get("state")).casefold() in {"0", "offline", "disconnected"}
+        if raw.get("disconnected_at") or raw.get("start_disconnected_millis"):
+            return True
+        return False
+
+    @staticmethod
+    def _reference_skip_is_explained_by_offline_device(target: AuditTarget, reference: str) -> bool:
+        offline_devices = target.sections.get("offline_devices") or []
+        if not offline_devices:
+            return False
+        if "UniFi management IP was unavailable" in reference:
+            return True
+        offline_ips = {str(device.get("ip")) for device in offline_devices if isinstance(device, dict) and device.get("ip")}
+        return any(ip in reference for ip in offline_ips)
 
     @staticmethod
     def _matches_dhcp_option(actual_value: Any, expected: dict[str, Any]) -> tuple[bool, Any]:
@@ -382,10 +445,11 @@ class ComplianceEngine:
         expected: Any = None,
         actual: Any = None,
         path: str | None = None,
+        severity: str = "noncompliant",
     ) -> Finding:
         ctx = target.context
         return Finding(
-            severity="noncompliant",
+            severity=severity,
             platform=ctx.platform,
             site=ctx.site_name,
             device=ctx.device_name,

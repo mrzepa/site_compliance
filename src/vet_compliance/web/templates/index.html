@@ -58,7 +58,7 @@
     <section class="table-wrap">
       <div class="table-meta">
         <div id="result-count">0 findings</div>
-        <input id="q" type="search" placeholder="Search site, device, finding, expected, found">
+        <input id="q" type="search" placeholder="Search site, device, finding, expected, found; use !text to exclude">
         <div id="sort-label">Sorted by site</div>
         <button id="clear" type="button">Clear</button>
       </div>
@@ -79,9 +79,9 @@
               <th><select id="site"><option value="">All sites</option></select></th>
               <th><select id="device"><option value="">All devices</option></select></th>
               <th><select id="section"><option value="">All sections</option></select></th>
-              <th><input id="message" type="search" placeholder="Filter findings"></th>
-              <th><input id="expected" type="search" placeholder="Filter expected"></th>
-              <th><input id="found" type="search" placeholder="Filter found"></th>
+              <th><input id="message" type="search" placeholder="Filter or !exclude"></th>
+              <th><input id="expected" type="search" placeholder="Filter or !exclude"></th>
+              <th><input id="found" type="search" placeholder="Filter or !exclude"></th>
             </tr>
           </thead>
           <tbody id="findings-body"></tbody>
@@ -132,6 +132,16 @@
       return text(finding[key]);
     }
 
+    function matchesTextFilter(value, rawTerm) {
+      const term = rawTerm.trim().toLowerCase();
+      if (!term) return true;
+      const exclude = term.startsWith("!");
+      const needle = exclude ? term.slice(1).trim() : term;
+      if (!needle) return true;
+      const contains = value.toLowerCase().includes(needle);
+      return exclude ? !contains : contains;
+    }
+
     function populateSelect(id, values) {
       const el = document.getElementById(id);
       for (const value of values) {
@@ -159,12 +169,17 @@
           if (selected && display(finding, field) !== selected) return false;
         }
         for (const field of textFields) {
-          const term = document.getElementById(field).value.trim().toLowerCase();
-          if (term && !display(finding, field).toLowerCase().includes(term)) return false;
+          if (!matchesTextFilter(display(finding, field), document.getElementById(field).value)) return false;
         }
         if (!query) return true;
-        return ["platform", "site", "device", "section", "message", "expected", "found"]
+        const searchable = ["platform", "site", "device", "section", "message", "expected", "found"]
           .some(key => display(finding, key).toLowerCase().includes(query));
+        if (query.startsWith("!")) {
+          const needle = query.slice(1).trim();
+          return !needle || !["platform", "site", "device", "section", "message", "expected", "found"]
+            .some(key => display(finding, key).toLowerCase().includes(needle));
+        }
+        return searchable;
       });
     }
 

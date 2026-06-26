@@ -37,8 +37,8 @@ meraki:
   exclude_networks: []
   # Useful while testing to avoid walking the full Dashboard org.
   max_networks:
-  # Meraki documents a 10 requests/second/org limit; 8 leaves room for retries and pagination.
-  requests_per_second_per_org: 8
+  # Meraki documents a 10 requests/second/org limit; 6 leaves room for retries and pagination.
+  requests_per_second_per_org: 6
   # Fallback pacing if requests_per_second_per_org is blank.
   request_pause_seconds: 0.3
   # Extra script-level 429 handling around the Meraki SDK's own retry behavior.
