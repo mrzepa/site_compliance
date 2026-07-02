@@ -7,11 +7,11 @@ unifi:
 
 secrets:
   # This file must be encrypted with ansible-vault in production.
-  vault_yaml: secrets/secrets.vault.yaml
+  vault_file: secrets/secrets.vault
 
 sites:
   # This file must be encrypted with ansible-vault in production.
-  vault_csv: secrets/sites.vault.csv
+  vault_file: secrets/sites.vault
 
 ssh:
   username: admin

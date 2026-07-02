@@ -38,7 +38,7 @@ Core requirements:
 - Switch SSH enabled, with username `admin`.
 - One switch SSH password per UniFi site.
 - The UniFi site names in `secrets/sites.csv` must match the UniFi controller site display names.
-- UniFi controller credentials are stored in `secrets/secrets.vault.yaml`.
+- UniFi controller credentials are stored in `secrets/secrets.vault`.
 
 Linux/macOS requirements:
 
@@ -66,8 +66,8 @@ Monitoring and production access requirements:
 - `config/config.yaml`: local runtime configuration, copied from `config/config.example.yaml`
 - `config/secrets.example.yaml`: example UniFi controller secret template
 - `config/sites.example.csv`: example site/password CSV template
-- `secrets/secrets.vault.yaml`: ansible-vault encrypted UniFi controller credentials
-- `secrets/sites.vault.csv`: ansible-vault encrypted site/password CSV
+- `secrets/secrets.vault`: ansible-vault encrypted UniFi controller credentials
+- `secrets/sites.vault`: ansible-vault encrypted site/password CSV
 - `secrets/.vault_pass`: local ansible-vault password file
 - `ansible.cfg`: Ansible defaults
 - `app/inventory.py`: dynamic Ansible inventory builder
@@ -121,7 +121,7 @@ unifi:
 
 Edit `secrets/sites.csv`. Use the UniFi controller site display name in `site_name`. The password is the shared SSH password for all switches at that site.
 
-Create the vault password file before encrypting any secret files. Ansible cannot create `secrets/secrets.vault.yaml` or `secrets/sites.vault.csv` until `secrets/.vault_pass` exists:
+Create the vault password file before encrypting any secret files. Ansible cannot create `secrets/secrets.vault` or `secrets/sites.vault` until `secrets/.vault_pass` exists:
 
 Linux/macOS:
 
@@ -148,14 +148,14 @@ Linux/macOS:
 
 ```bash
 docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
-mv secrets/secrets.yaml secrets/secrets.vault.yaml
+mv secrets/secrets.yaml secrets/secrets.vault
 ```
 
 Windows PowerShell:
 
 ```powershell
 docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
-Rename-Item secrets/secrets.yaml secrets.vault.yaml
+Rename-Item -Path secrets/secrets.yaml -NewName secrets.vault
 ```
 
 Encrypt the site/password CSV from inside the container.
@@ -164,14 +164,21 @@ Linux/macOS:
 
 ```bash
 docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
-mv secrets/sites.csv secrets/sites.vault.csv
+mv secrets/sites.csv secrets/sites.vault
 ```
 
 Windows PowerShell:
 
 ```powershell
 docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
-Rename-Item secrets/sites.csv sites.vault.csv
+Rename-Item -Path secrets/sites.csv -NewName sites.vault
+```
+
+To edit either encrypted file later, run `ansible-vault edit` inside the container. The image includes `vi` for this workflow:
+
+```bash
+docker compose run --rm radius ansible-vault edit secrets/sites.vault
+docker compose run --rm radius ansible-vault edit secrets/secrets.vault
 ```
 
 Ansible reads `secrets/.vault_pass` through `ansible.cfg`.
@@ -180,8 +187,8 @@ Before running, confirm these files exist:
 
 - `config/config.yaml`
 - `secrets/.vault_pass`
-- `secrets/secrets.vault.yaml`
-- `secrets/sites.vault.csv`
+- `secrets/secrets.vault`
+- `secrets/sites.vault`
 
 ## Run
 
@@ -198,6 +205,7 @@ docker compose up -d --build
 ```
 
 The remediation job runs on container start by default and then daily at `scheduler.daily_at`.
+The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone`.
 
 Prometheus is available at `http://localhost:9090`.
 Grafana is available at `http://localhost:3000`.
@@ -258,8 +266,8 @@ cp config/secrets.example.yaml secrets/secrets.yaml
 Edit:
 
 - `config/config.yaml` for controller URLs, parallelism, schedule, and SSH settings
-- `secrets/secrets.vault.yaml` for UniFi controller credentials
-- `secrets/sites.vault.csv` for site-specific switch passwords
+- `secrets/secrets.vault` for UniFi controller credentials
+- `secrets/sites.vault` for site-specific switch passwords
 
 ## Metrics
 
@@ -268,7 +276,7 @@ Edit:
 - `radius_last_run_duration_seconds`
 - `radius_switches_total`
 - `radius_switches_failed`
-- `radius_sites_missing`: count of rows in `secrets/sites.vault.csv` whose `site_name` did not match any UniFi controller site during the last inventory lookup
+- `radius_sites_missing`: count of rows in `secrets/sites.vault` whose `site_name` did not match any UniFi controller site during the last inventory lookup
 - `radius_site_switches_total{site="..."}`
 - `radius_site_switches_success{site="..."}`
 - `radius_site_switches_failed{site="..."}`
@@ -280,10 +288,10 @@ Grafana is provisioned automatically with:
 
 - A Prometheus datasource pointing at `http://prometheus:9090`
 - A `Radius Remediation` dashboard in the `Radius` folder
-- A `Site Mode` dropdown with `All sites` and `Failed sites`
-- A `Site` dropdown that can show all sites or only sites where `radius_site_switches_failed > 0`
+- A `Site` dropdown sourced from discovered sites
+- A `Failed Connectivity Last Run` table for drilling into failed switches
 
-The dashboard includes sites with failures, total targeted switches, failed switches, success rate, failures by site, per-switch status, run duration, and a count of CSV sites not found in UniFi.
+The dashboard includes sites with failures, total targeted switches, failed switches, success rate, failed connectivity for the latest run, failures by site, per-switch status, run duration, and a count of configured sites not found in UniFi.
 
 Suggested alert expressions for later Alertmanager routing:
 

@@ -7,6 +7,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from prometheus_client import Gauge, start_http_server
@@ -20,7 +21,7 @@ LAST_RUN_TIMESTAMP = Gauge("radius_last_run_timestamp", "Unix timestamp of the l
 RUN_DURATION = Gauge("radius_last_run_duration_seconds", "Duration of the last run in seconds.")
 SWITCH_TOTAL = Gauge("radius_switches_total", "Total switches targeted in the last run.")
 SWITCH_FAILED = Gauge("radius_switches_failed", "Switches that failed in the last run.")
-SITE_MISSING = Gauge("radius_sites_missing", "CSV sites not found on the UniFi controller in the last run.")
+SITE_MISSING = Gauge("radius_sites_missing", "Configured sites not found on the UniFi controller in the last run.")
 SITE_SWITCH_TOTAL = Gauge("radius_site_switches_total", "Total switches targeted in the last run by site.", ["site"])
 SITE_SWITCH_FAILED = Gauge("radius_site_switches_failed", "Switches that failed in the last run by site.", ["site"])
 SITE_SWITCH_SUCCESS = Gauge("radius_site_switches_success", "Switches that succeeded in the last run by site.", ["site"])
@@ -36,6 +37,7 @@ _SWITCH_LABELS: set[tuple[str, str, str]] = set()
 def run_job(config_path: str) -> None:
     started = time.time()
     config = load_config(config_path)
+    timezone_name = str(config.get("scheduler", {}).get("timezone", "") or "")
     output_dir = Path(config.get("metrics", {}).get("output_dir", "data"))
     output_dir.mkdir(parents=True, exist_ok=True)
     result_path = output_dir / "last_run.json"
@@ -44,13 +46,14 @@ def run_job(config_path: str) -> None:
         inventory = build_inventory(config)
     except Exception as exc:
         logger.exception("Inventory generation failed")
-        _record_failure(result_path, started, f"inventory failed: {exc}")
+        _record_failure(result_path, started, f"inventory failed: {exc}", timezone_name)
         return
 
     target_count = _target_count(inventory)
     ansible_env = os.environ.copy()
     ansible_env["ANSIBLE_FORKS"] = str(config.get("ansible", {}).get("forks", 50))
     ansible_env["CONFIG_PATH"] = config_path
+    ansible_env["PYTHONPATH"] = str(Path.cwd())
     if not config.get("ssh", {}).get("host_key_checking", False):
         ansible_env["ANSIBLE_HOST_KEY_CHECKING"] = "False"
 
@@ -60,10 +63,11 @@ def run_job(config_path: str) -> None:
     duration = time.time() - started
     recap = _recap_by_host(completed.stdout)
     site_metrics = _site_counts(inventory, recap)
-    failed = sum(item["failed"] for item in site_metrics[0].values())
-    success = completed.returncode == 0 and failed == 0
+    ansible_inventory_failed = _ansible_inventory_failed(completed.stdout, completed.stderr)
+    failed = target_count if ansible_inventory_failed else sum(item["failed"] for item in site_metrics[0].values())
+    success = completed.returncode == 0 and failed == 0 and not ansible_inventory_failed
     result = {
-        "completed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "completed_at": _format_completed_at(started + duration, timezone_name),
         "success": success,
         "returncode": completed.returncode,
         "duration_seconds": round(duration, 3),
@@ -80,12 +84,12 @@ def run_job(config_path: str) -> None:
         logger.error("RADIUS retransmit remediation completed with failures. See %s.", result_path)
 
 
-def _record_failure(result_path: Path, started: float, error: str) -> None:
+def _record_failure(result_path: Path, started: float, error: str, timezone_name: str) -> None:
     duration = time.time() - started
     result_path.write_text(
         json.dumps(
             {
-                "completed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "completed_at": _format_completed_at(started + duration, timezone_name),
                 "success": False,
                 "returncode": 1,
                 "duration_seconds": round(duration, 3),
@@ -98,6 +102,19 @@ def _record_failure(result_path: Path, started: float, error: str) -> None:
         encoding="utf-8",
     )
     _set_metrics(False, time.time(), duration, 0, 0, _missing_site_count(error), ({}, set()))
+
+
+def _format_completed_at(timestamp: float, timezone_name: str) -> str:
+    try:
+        tzinfo = ZoneInfo(timezone_name) if timezone_name else None
+    except ZoneInfoNotFoundError:
+        logger.warning("Unknown scheduler timezone %s; using container local timezone for completed_at.", timezone_name)
+        tzinfo = None
+    if tzinfo:
+        completed = datetime.fromtimestamp(timestamp, tzinfo)
+    else:
+        completed = datetime.fromtimestamp(timestamp).astimezone()
+    return completed.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def _target_count(inventory: dict) -> int:
@@ -143,7 +160,18 @@ def _site_counts(inventory: dict, recap: dict[str, dict[str, int]]) -> tuple[dic
 
 
 def _missing_site_count(text: str) -> int:
-    return sum(1 for line in text.splitlines() if "No matching UniFi site found for CSV entry:" in line)
+    return sum(1 for line in text.splitlines() if "No matching UniFi site found for configured site:" in line)
+
+
+def _ansible_inventory_failed(stdout: str, stderr: str) -> bool:
+    text = f"{stdout}\n{stderr}"
+    markers = (
+        "Unable to parse",
+        "No inventory was parsed",
+        "provided hosts list is empty",
+        "skipping: no hosts matched",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _set_metrics(

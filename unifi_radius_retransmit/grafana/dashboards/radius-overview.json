@@ -758,7 +758,7 @@
       ],
       "title": "Sites Not Found In UniFi",
       "type": "stat",
-      "description": "Number of rows in secrets/sites.vault.csv whose site_name did not match any UniFi controller site during the last inventory lookup. A nonzero value usually means a typo, renamed UniFi site, or site listed under the wrong controller."
+      "description": "Number of configured sites in secrets/sites.vault whose site_name did not match any UniFi controller site during the last inventory lookup. A nonzero value usually means a typo, renamed UniFi site, or site listed under the wrong controller."
     }
   ],
   "refresh": "30s",

@@ -14,6 +14,8 @@ from typing import Any
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from app.unifi_client import UnifiClient
 
 logger = logging.getLogger(__name__)
@@ -32,7 +34,8 @@ def load_config(path: str | Path) -> dict[str, Any]:
 
 
 def _apply_secret_config(config: dict[str, Any]) -> dict[str, Any]:
-    secret_path = config.get("secrets", {}).get("vault_yaml")
+    secret_config = config.get("secrets", {})
+    secret_path = secret_config.get("vault_file") or secret_config.get("vault_yaml")
     if not secret_path:
         return config
     secrets = yaml.safe_load(_read_vault_or_plaintext(Path(secret_path))) or {}
@@ -53,7 +56,8 @@ def _apply_secret_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_site_credentials(config: dict[str, Any]) -> list[SiteCredential]:
-    csv_path = Path(config["sites"]["vault_csv"])
+    sites_config = config["sites"]
+    csv_path = Path(sites_config.get("vault_file") or sites_config["vault_csv"])
     content = _read_vault_or_plaintext(csv_path)
     rows = csv.DictReader(content.splitlines())
     credentials: list[SiteCredential] = []
@@ -132,7 +136,7 @@ def build_inventory(config: dict[str, Any]) -> dict[str, Any]:
 
     missing = sorted(set(wanted_by_name) - matched_sites)
     for site_name in missing:
-        logger.error("No matching UniFi site found for CSV entry: %s", site_name)
+        logger.error("No matching UniFi site found for configured site: %s", site_name)
 
     inventory = {
         "all": {"children": ["unifi_switches"]},

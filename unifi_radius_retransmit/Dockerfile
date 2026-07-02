@@ -4,12 +4,14 @@ FROM ${PYTHON_IMAGE}
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ANSIBLE_HOST_KEY_CHECKING=False \
-    ANSIBLE_RETRY_FILES_ENABLED=False
+    ANSIBLE_RETRY_FILES_ENABLED=False \
+    EDITOR=vi \
+    VISUAL=vi
 
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client sshpass ca-certificates \
+    && apt-get install -y --no-install-recommends openssh-client sshpass ca-certificates vim-tiny \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
