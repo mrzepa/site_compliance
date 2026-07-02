@@ -1,0 +1,14 @@
+- name: Apply UniFi switch RADIUS default config timing
+  hosts: unifi_switches
+  gather_facts: false
+  strategy: free
+  serial: "{{ batch_size | default('100%') }}"
+  tasks:
+    - name: Set RADIUS default config retransmit and timeout
+      ansible.builtin.raw: "radius default-config retransmit 10 timeout 30"
+      register: radius_command
+      changed_when: true
+
+    - name: Show command output
+      ansible.builtin.debug:
+        var: radius_command.stdout_lines

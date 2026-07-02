@@ -1,0 +1,33 @@
+unifi:
+  controllers:
+    - name: controller-a
+      base_url: https://192.0.2.10:8443
+  request_timeout_seconds: 20
+  verify_tls: false
+
+secrets:
+  # This file must be encrypted with ansible-vault in production.
+  vault_yaml: secrets/secrets.vault.yaml
+
+sites:
+  # This file must be encrypted with ansible-vault in production.
+  vault_csv: secrets/sites.vault.csv
+
+ssh:
+  username: admin
+  port: 22
+  connect_timeout_seconds: 15
+  command_timeout_seconds: 60
+  host_key_checking: false
+
+ansible:
+  forks: 50
+
+scheduler:
+  timezone: America/Toronto
+  run_on_start: true
+  daily_at: "03:00"
+
+metrics:
+  listen_port: 9108
+  output_dir: data

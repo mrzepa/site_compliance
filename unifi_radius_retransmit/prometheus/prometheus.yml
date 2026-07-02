@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: radius
+    static_configs:
+      - targets:
+          - radius:9108
