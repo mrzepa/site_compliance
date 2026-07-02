@@ -1,2 +1,3 @@
-site_name,password
-Example Clinic,replace-with-switch-admin-password
+site_name,password,username
+Example Clinic,replace-with-switch-admin-password,
+Legacy Clinic,replace-with-switch-admin-password,admin

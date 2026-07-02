@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class SiteCredential:
     site_name: str
     password: str
+    username: str | None = None
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -64,9 +65,10 @@ def load_site_credentials(config: dict[str, Any]) -> list[SiteCredential]:
     for index, row in enumerate(rows, start=2):
         site_name = (row.get("site_name") or "").strip()
         password = row.get("password") or ""
+        username = (row.get("username") or "").strip() or None
         if not site_name or not password:
             raise ValueError(f"Missing site_name or password in {csv_path} line {index}")
-        credentials.append(SiteCredential(site_name=site_name, password=password))
+        credentials.append(SiteCredential(site_name=site_name, password=password, username=username))
     return credentials
 
 
@@ -119,7 +121,7 @@ def build_inventory(config: dict[str, Any]) -> dict[str, Any]:
                 children[site_group]["hosts"].append(host_key)
                 hostvars[host_key] = {
                     "ansible_host": address,
-                    "ansible_user": ssh.get("username", "admin"),
+                    "ansible_user": credential.username or ssh.get("username", "admin"),
                     "ansible_password": credential.password,
                     "ansible_port": int(ssh.get("port", 22)),
                     "ansible_connection": "ssh",

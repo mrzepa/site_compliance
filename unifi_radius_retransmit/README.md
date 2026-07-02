@@ -35,7 +35,7 @@ Core requirements:
 - Network access from the container host to the UniFi controller.
 - Network access from the container host to every target switch on SSH port `22`.
 - A UniFi controller account that can list sites and devices.
-- Switch SSH enabled, with username `admin`.
+- Switch SSH enabled. The default username is set in `config/config.yaml`; site-specific username exceptions can be set in `secrets/sites.vault`.
 - One switch SSH password per UniFi site.
 - The UniFi site names in `secrets/sites.csv` must match the UniFi controller site display names.
 - UniFi controller credentials are stored in `secrets/secrets.vault`.
@@ -65,9 +65,9 @@ Monitoring and production access requirements:
 
 - `config/config.yaml`: local runtime configuration, copied from `config/config.example.yaml`
 - `config/secrets.example.yaml`: example UniFi controller secret template
-- `config/sites.example.csv`: example site/password CSV template
+- `config/sites.example.csv`: example site/password/username CSV template
 - `secrets/secrets.vault`: ansible-vault encrypted UniFi controller credentials
-- `secrets/sites.vault`: ansible-vault encrypted site/password CSV
+- `secrets/sites.vault`: ansible-vault encrypted site/password/username CSV
 - `secrets/.vault_pass`: local ansible-vault password file
 - `ansible.cfg`: Ansible defaults
 - `app/inventory.py`: dynamic Ansible inventory builder
@@ -121,6 +121,14 @@ unifi:
 
 Edit `secrets/sites.csv`. Use the UniFi controller site display name in `site_name`. The password is the shared SSH password for all switches at that site.
 
+The optional `username` column is for exceptions. Leave it blank to use `ssh.username` from `config/config.yaml`; set it only when that site uses a different switch SSH username:
+
+```csv
+site_name,password,username
+Example Clinic,replace-with-switch-admin-password,
+Legacy Clinic,replace-with-switch-admin-password,admin
+```
+
 Create the vault password file before encrypting any secret files. Ansible cannot create `secrets/secrets.vault` or `secrets/sites.vault` until `secrets/.vault_pass` exists:
 
 Linux/macOS:
@@ -158,7 +166,7 @@ docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
 Rename-Item -Path secrets/secrets.yaml -NewName secrets.vault
 ```
 
-Encrypt the site/password CSV from inside the container.
+Encrypt the site/password/username CSV from inside the container.
 
 Linux/macOS:
 
@@ -210,6 +218,44 @@ The latest run summary is written to `data/last_run.json`. Its `completed_at` va
 Prometheus is available at `http://localhost:9090`.
 Grafana is available at `http://localhost:3000`.
 The job metrics endpoint is exposed at `http://localhost:9108/metrics`.
+
+The Compose stack uses a dedicated Docker bridge network on `10.254.99.0/24` to avoid Docker auto-selecting a subnet that overlaps with production site networks.
+If this subnet is changed after containers already exist, recreate the stack so Docker replaces the old network:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+## Troubleshooting
+
+If `data/last_run.json` shows switches as `UNREACHABLE` with messages like `connect to host ... port 22: Connection timed out`, the UniFi lookup worked but the container cannot open SSH to the switch management IPs.
+
+Test TCP connectivity to a switch from inside the same container network:
+
+```bash
+docker compose run --rm radius nc -vz -w 5 172.20.70.2 22
+```
+
+Test basic routing:
+
+```bash
+docker compose run --rm radius ping -c 4 172.20.70.2
+```
+
+Inspect the route table from inside the container:
+
+```bash
+docker compose run --rm radius ip route
+```
+
+Test SSH negotiation manually:
+
+```bash
+docker compose run --rm radius ssh -vvv -o ConnectTimeout=10 -o StrictHostKeyChecking=no itvsadmin@172.20.70.2
+```
+
+If these fail from inside the container but work from the host PC, check Docker Desktop, VPN split tunneling, firewall policy, routing to the switch management VLANs, and whether the switches actually allow SSH from the Docker host.
 
 ## Grafana Login
 

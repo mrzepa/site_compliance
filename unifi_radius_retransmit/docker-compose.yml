@@ -11,6 +11,8 @@ services:
       - ./secrets:/app/secrets
     ports:
       - "9108:9108"
+    networks:
+      - radius-net
     restart: unless-stopped
 
   prometheus:
@@ -20,6 +22,8 @@ services:
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
+    networks:
+      - radius-net
     restart: unless-stopped
 
   grafana:
@@ -30,7 +34,17 @@ services:
       - grafana-data:/var/lib/grafana
     ports:
       - "3000:3000"
+    networks:
+      - radius-net
     restart: unless-stopped
+
+networks:
+  radius-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.254.99.0/24
+          gateway: 10.254.99.1
 
 volumes:
   prometheus-data:
