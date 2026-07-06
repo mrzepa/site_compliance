@@ -19,6 +19,7 @@ The service is intentionally independent of the repo's compliance auditor code. 
 - [Files](#files)
 - [Setup](#setup)
 - [Run](#run)
+- [Native Operation](#native-operation)
 - [Grafana Login](#grafana-login)
 - [Production Access](#production-access)
 - [Configuration Reference](#configuration-reference)
@@ -29,30 +30,37 @@ The service is intentionally independent of the repo's compliance auditor code. 
 
 ## Requirements
 
-Core requirements:
+Core requirements for every install:
 
-- Docker Engine or Docker Desktop with Docker Compose v2.
-- Network access from the container host to the UniFi controller.
-- Network access from the container host to every target switch on SSH port `22`.
+- Network access from the runtime host to the UniFi controller.
+- Network access from the runtime host to every target switch on SSH port `22`.
 - A UniFi controller account that can list sites and devices.
 - Switch SSH enabled. The default username is set in `config/config.yaml`; site-specific username exceptions can be set in `secrets/sites.vault`.
 - One switch SSH password per UniFi site.
 - The UniFi site names in `secrets/sites.csv` must match the UniFi controller site display names.
 - UniFi controller credentials are stored in `secrets/secrets.vault`.
 
-Linux/macOS requirements:
+Docker requirements:
 
-- Docker Engine or Docker Desktop.
+- Docker Engine or Docker Desktop with Docker Compose v2.
 
-Windows requirements:
+Native Linux/macOS requirements:
 
-- Docker Desktop.
-- PowerShell.
+- Python 3.11 or newer.
+- OpenSSH client.
+- `python3-venv` on Linux distributions that package venv separately.
+
+Native Windows requirements:
+
+- Windows Subsystem for Linux with a Linux distribution such as Ubuntu.
+- Python 3.11 or newer inside WSL.
+- Ansible runs inside WSL. Native Windows PowerShell is useful for scheduling, but not as the Ansible control node.
 
 Ansible and `ansible-vault` requirements:
 
-- All Ansible and `ansible-vault` commands run inside the `radius` container.
-- Build the container before encrypting `secrets/sites.csv`.
+- Docker mode runs Ansible and `ansible-vault` inside the `radius` container.
+- Native mode runs Ansible and `ansible-vault` from the local Python virtual environment.
+- The default Ansible SSH connection is `paramiko`, so native password authentication does not require `sshpass`.
 
 Monitoring and production access requirements:
 
@@ -73,6 +81,10 @@ Monitoring and production access requirements:
 - `app/inventory.py`: dynamic Ansible inventory builder
 - `playbooks/radius_default_config.yml`: switch SSH playbook
 - `app/scheduler.py`: daily scheduler plus Prometheus metrics endpoint
+- `scripts/run-native.sh`: native Linux/macOS/WSL runner
+- `deploy/systemd/`: Linux systemd templates
+- `deploy/launchd/`: macOS launchd template
+- `deploy/windows/`: Windows Task Scheduler helper for WSL
 
 ## Setup
 
@@ -144,45 +156,93 @@ Windows PowerShell:
 Set-Content -Path secrets/.vault_pass -Value "replace-with-a-real-vault-password" -NoNewline
 ```
 
-Build the container image so `ansible-vault` is available:
+Choose Docker or native tooling for the remaining setup.
+
+Docker:
 
 ```bash
 docker compose build radius
 ```
 
-Encrypt the UniFi controller secrets from inside the container.
+Native Linux/macOS or WSL:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+source .venv/bin/activate
+```
+
+Encrypt the UniFi controller secrets.
 
 Linux/macOS:
 
 ```bash
-docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
+ansible-vault encrypt secrets/secrets.yaml
 mv secrets/secrets.yaml secrets/secrets.vault
 ```
 
-Windows PowerShell:
+Docker, Windows PowerShell:
 
 ```powershell
 docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
 Rename-Item -Path secrets/secrets.yaml -NewName secrets.vault
 ```
 
-Encrypt the site/password/username CSV from inside the container.
+Windows WSL:
+
+```bash
+ansible-vault encrypt secrets/secrets.yaml
+mv secrets/secrets.yaml secrets/secrets.vault
+```
+
+Docker alternative:
+
+```bash
+docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
+mv secrets/secrets.yaml secrets/secrets.vault
+```
+
+Encrypt the site/password/username CSV.
 
 Linux/macOS:
 
 ```bash
-docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
+ansible-vault encrypt secrets/sites.csv
 mv secrets/sites.csv secrets/sites.vault
 ```
 
-Windows PowerShell:
+Docker, Windows PowerShell:
 
 ```powershell
 docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
 Rename-Item -Path secrets/sites.csv -NewName sites.vault
 ```
 
-To edit either encrypted file later, run `ansible-vault edit` inside the container. The image includes `vi` for this workflow:
+Windows WSL:
+
+```bash
+ansible-vault encrypt secrets/sites.csv
+mv secrets/sites.csv secrets/sites.vault
+```
+
+Docker alternative:
+
+```bash
+docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
+mv secrets/sites.csv secrets/sites.vault
+```
+
+To edit either encrypted file later, use the same mode you used for setup.
+
+Native:
+
+```bash
+ansible-vault edit secrets/sites.vault
+ansible-vault edit secrets/secrets.vault
+```
+
+Docker:
 
 ```bash
 docker compose run --rm radius ansible-vault edit secrets/sites.vault
@@ -200,24 +260,33 @@ Before running, confirm these files exist:
 
 ## Run
 
-Linux/macOS:
+Docker, Linux/macOS:
 
 ```bash
 docker compose up -d --build
 ```
 
-Windows PowerShell:
+Docker, Windows PowerShell:
 
 ```powershell
 docker compose up -d --build
 ```
 
-The remediation job runs on container start by default and then daily at `scheduler.daily_at`.
+Native, Linux/macOS/WSL:
+
+```bash
+source .venv/bin/activate
+./scripts/run-native.sh
+```
+
+The remediation job runs on service start by default and then daily at `scheduler.daily_at`.
 The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone`.
 
 Prometheus is available at `http://localhost:9090`.
 Grafana is available at `http://localhost:3000`.
 The job metrics endpoint is exposed at `http://localhost:9108/metrics`.
+
+In native mode, the Python service exposes `http://localhost:9108/metrics`. Prometheus and Grafana are available only if you run them separately or keep the Compose monitoring services.
 
 The Compose stack uses a dedicated Docker bridge network on `10.254.99.0/24` to avoid Docker auto-selecting a subnet that overlaps with production site networks.
 If this subnet is changed after containers already exist, recreate the stack so Docker replaces the old network:
@@ -226,6 +295,47 @@ If this subnet is changed after containers already exist, recreate the stack so 
 docker compose down
 docker compose up -d --build
 ```
+
+## Native Operation
+
+Native mode runs the same Python scheduler and Ansible playbook without Docker. Keep the process running so the built-in scheduler can run daily.
+
+Linux systemd:
+
+1. Copy the project to `/opt/radius` or edit `deploy/systemd/radius.service` to match your install path.
+2. Install dependencies with the native setup commands.
+3. Install and start the service:
+
+```bash
+sudo cp deploy/systemd/radius.service /etc/systemd/system/radius.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now radius.service
+sudo systemctl status radius.service
+```
+
+The included `deploy/systemd/radius.timer` is optional. The service itself should stay running because `app.scheduler` owns the daily schedule.
+
+macOS launchd:
+
+1. Copy the project to `/opt/radius` or edit `deploy/launchd/com.example.radius.plist` to match your install path.
+2. Install dependencies with the native setup commands.
+3. Load the launch agent:
+
+```bash
+cp deploy/launchd/com.example.radius.plist ~/Library/LaunchAgents/com.example.radius.plist
+launchctl load ~/Library/LaunchAgents/com.example.radius.plist
+launchctl start com.example.radius
+```
+
+Windows without Docker:
+
+Use WSL as the runtime. Ansible is not supported as a native Windows control node, so install the project and Python virtual environment inside WSL. From PowerShell, register a startup task that launches the WSL scheduler:
+
+```powershell
+.\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
+
+The Windows scheduled task starts the long-running WSL scheduler at boot. The Python scheduler controls the daily run time through `scheduler.daily_at`.
 
 ## Troubleshooting
 
@@ -256,6 +366,8 @@ docker compose run --rm radius ssh -vvv -o ConnectTimeout=10 -o StrictHostKeyChe
 ```
 
 If these fail from inside the container but work from the host PC, check Docker Desktop, VPN split tunneling, firewall policy, routing to the switch management VLANs, and whether the switches actually allow SSH from the Docker host.
+
+In native mode, run the same tools directly from the runtime host or WSL shell, for example `nc -vz -w 5 172.20.70.2 22`, `ping -c 4 172.20.70.2`, and `ip route`.
 
 ## Grafana Login
 
@@ -314,6 +426,15 @@ Edit:
 - `config/config.yaml` for controller URLs, parallelism, schedule, and SSH settings
 - `secrets/secrets.vault` for UniFi controller credentials
 - `secrets/sites.vault` for site-specific switch passwords
+
+Useful native/Docker SSH setting:
+
+```yaml
+ansible:
+  connection: paramiko
+```
+
+Use `paramiko` for the most portable password-based SSH behavior. Use `ssh` only when the runtime host has OpenSSH plus the required password-auth support installed.
 
 ## Metrics
 

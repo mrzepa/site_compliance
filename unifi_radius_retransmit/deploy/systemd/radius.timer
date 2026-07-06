@@ -1,0 +1,9 @@
+[Unit]
+Description=Start UniFi Radius Remediation at boot
+
+[Timer]
+OnBootSec=30s
+Unit=radius.service
+
+[Install]
+WantedBy=timers.target

@@ -21,6 +21,7 @@ ssh:
   host_key_checking: false
 
 ansible:
+  connection: paramiko
   forks: 50
 
 scheduler:

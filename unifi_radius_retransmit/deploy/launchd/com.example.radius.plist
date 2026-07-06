@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.radius</string>
+  <key>WorkingDirectory</key>
+  <string>/opt/radius</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>/opt/radius</string>
+  </dict>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/radius/.venv/bin/python</string>
+    <string>-m</string>
+    <string>app.scheduler</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/opt/radius/data/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/opt/radius/data/launchd.err.log</string>
+</dict>
+</plist>

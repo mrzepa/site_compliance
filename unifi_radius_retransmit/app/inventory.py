@@ -97,6 +97,8 @@ def build_inventory(config: dict[str, Any]) -> dict[str, Any]:
     timeout = int(unifi.get("request_timeout_seconds", 20))
     verify_tls = bool(unifi.get("verify_tls", False))
     ssh = config.get("ssh", {})
+    ansible = config.get("ansible", {})
+    ansible_connection = str(ansible.get("connection", "paramiko"))
     controllers = unifi.get("controllers", [])
 
     for controller_config in controllers:
@@ -124,11 +126,12 @@ def build_inventory(config: dict[str, Any]) -> dict[str, Any]:
                     "ansible_user": credential.username or ssh.get("username", "admin"),
                     "ansible_password": credential.password,
                     "ansible_port": int(ssh.get("port", 22)),
-                    "ansible_connection": "ssh",
+                    "ansible_connection": ansible_connection,
                     "ansible_ssh_common_args": "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-                    if not ssh.get("host_key_checking", False)
+                    if ansible_connection == "ssh" and not ssh.get("host_key_checking", False)
                     else "",
                     "ansible_ssh_timeout": int(ssh.get("connect_timeout_seconds", 15)),
+                    "ansible_timeout": int(ssh.get("connect_timeout_seconds", 15)),
                     "command_timeout_seconds": int(ssh.get("command_timeout_seconds", 60)),
                     "unifi_controller": client.name,
                     "unifi_site": credential.site_name,
