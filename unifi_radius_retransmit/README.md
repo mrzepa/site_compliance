@@ -279,6 +279,23 @@ source .venv/bin/activate
 ./scripts/run-native.sh
 ```
 
+One-shot connectivity/remediation test without starting the scheduler:
+
+Docker:
+
+```bash
+docker compose run --rm radius python -m app.run_once
+```
+
+Native Linux/macOS/WSL:
+
+```bash
+source .venv/bin/activate
+./scripts/run-once-native.sh
+```
+
+The one-shot command still writes `data/last_run.json` and exits `0` on full success or `1` when any switch fails.
+
 The remediation job runs on service start by default and then daily at `scheduler.daily_at`.
 The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone`.
 
@@ -331,11 +348,80 @@ Windows without Docker:
 
 Use WSL as the runtime. Ansible is not supported as a native Windows control node, so install the project and Python virtual environment inside WSL. From PowerShell, register a startup task that launches the WSL scheduler:
 
+From the repo root:
+
+```powershell
+.\unifi_radius_retransmit\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
+
+If PowerShell blocks script execution, use a process-scoped bypass:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\unifi_radius_retransmit\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
+
+Or, from inside the `unifi_radius_retransmit` folder:
+
 ```powershell
 .\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
 ```
 
+From inside `unifi_radius_retransmit` with execution-policy bypass:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
+
+Or, from inside `unifi_radius_retransmit\deploy\windows`:
+
+```powershell
+.\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
+
+From inside `unifi_radius_retransmit\deploy\windows` with execution-policy bypass:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
+
+The filename uses `wsl` with a lowercase letter `L`. A compatibility wrapper named `register-radius-ws1-task.ps1` is also included in case it is typed with the number `1`.
+
 The Windows scheduled task starts the long-running WSL scheduler at boot. The Python scheduler controls the daily run time through `scheduler.daily_at`.
+
+Manual Windows Task Scheduler setup:
+
+1. Open **Task Scheduler**.
+2. Select **Task Scheduler Library**.
+3. Select **Create Task**, not **Create Basic Task**.
+4. On **General**:
+   - Name: `UniFi Radius Remediation`
+   - Select **Run whether user is logged on or not** if this should run after reboot without a login session.
+   - Select **Run with highest privileges** if your environment requires it.
+5. On **Triggers**:
+   - Select **New**.
+   - Begin the task: **At startup**.
+   - Select **OK**.
+6. On **Actions**:
+   - Select **New**.
+   - Action: **Start a program**.
+   - Program/script:
+
+```text
+wsl.exe
+```
+
+   - Add arguments:
+
+```text
+-d Ubuntu -- bash -lc "cd /opt/radius && export PYTHONPATH=$PWD && .venv/bin/python -m app.scheduler"
+```
+
+7. On **Settings**:
+   - Enable **Allow task to be run on demand**.
+   - Enable **If the task fails, restart every** and choose a retry interval such as `1 minute`.
+8. Select **OK** and enter credentials if prompted.
+
+To test the task from the GUI, right-click it and select **Run**. In WSL, check `/opt/radius/data/last_run.json`.
 
 ## Troubleshooting
 
