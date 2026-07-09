@@ -19,7 +19,7 @@ The service is intentionally independent of the repo's compliance auditor code. 
 - [Files](#files)
 - [Setup](#setup)
 - [Run](#run)
-- [Native Operation](#native-operation)
+- [Windows Without Docker](#windows-without-docker)
 - [Grafana Login](#grafana-login)
 - [Production Access](#production-access)
 - [Configuration Reference](#configuration-reference)
@@ -35,34 +35,27 @@ Core requirements for every install:
 - Network access from the runtime host to the UniFi controller.
 - Network access from the runtime host to every target switch on SSH port `22`.
 - A UniFi controller account that can list sites and devices.
-- Switch SSH enabled. The default username is set in `config/config.yaml`; site-specific username exceptions can be set in `secrets/sites.vault`.
+- Switch SSH enabled. In Docker mode, the default username is set in `config/config.yaml`; site-specific username exceptions can be set in `secrets/sites.vault`. In Windows-without-Docker mode, the default username is set in `.env`; site-specific username exceptions can be set in `.sites.csv`.
 - One switch SSH password per UniFi site.
-- For Docker and native Linux/macOS Ansible mode, the UniFi site names in `secrets/sites.vault` must match the UniFi controller site display names.
-- For Docker and native Linux/macOS Ansible mode, UniFi controller credentials are stored in `secrets/secrets.vault`.
-- For Windows-native Python mode, UniFi controller credentials and site switch credentials are stored in `.env`.
+- For Docker mode, the UniFi site names in `secrets/sites.vault` must match the UniFi controller site display names.
+- For Docker mode, UniFi controller credentials are stored in `secrets/secrets.vault`.
+- For Windows without Docker, UniFi controller credentials are stored in `.env` and site switch credentials are stored in `.sites.csv`.
 
 Docker requirements:
 
 - Docker Engine or Docker Desktop with Docker Compose v2.
 
-Native Linux/macOS requirements:
-
-- Python 3.11 or newer.
-- OpenSSH client.
-- `python3-venv` on Linux distributions that package venv separately.
-
-Native Windows requirements:
+Windows without Docker requirements:
 
 - Windows 11 Enterprise or another supported Windows release with Python 3.11 or newer.
-- No Docker, WSL, or Ansible is required for the Windows-native runner.
-- Windows-native mode uses `.env` for secrets and Paramiko for SSH fan-out.
+- No Docker, WSL, or Ansible is required for the Windows-without-Docker runner.
+- Windows-without-Docker mode uses `.env`, `.sites.csv`, and Paramiko for SSH fan-out.
 
 Ansible and `ansible-vault` requirements:
 
 - Docker mode runs Ansible and `ansible-vault` inside the `radius` container.
-- Native Linux/macOS mode runs Ansible and `ansible-vault` from the local Python virtual environment.
-- Windows-native Python mode does not use Ansible or Ansible Vault.
-- The default Ansible SSH connection is `paramiko`, so native password authentication does not require `sshpass`.
+- Windows-without-Docker mode does not use Ansible or Ansible Vault.
+- The default Ansible SSH connection is `paramiko`, so Docker mode password authentication does not require `sshpass`.
 
 Monitoring and production access requirements:
 
@@ -83,17 +76,14 @@ Monitoring and production access requirements:
 - `app/inventory.py`: dynamic Ansible inventory builder
 - `playbooks/radius_default_config.yml`: switch SSH playbook
 - `app/scheduler.py`: daily scheduler plus Prometheus metrics endpoint
-- `app/windows_native.py`: Windows-native pure Python runner without Ansible
-- `scripts/run-native.sh`: native Linux/macOS/WSL runner
-- `deploy/systemd/`: Linux systemd templates
-- `deploy/launchd/`: macOS launchd template
-- `deploy/windows/`: optional WSL Task Scheduler helpers
+- `app/windows_native.py`: Windows-without-Docker pure Python runner without Ansible
+- `.sites.example.csv`: Windows-without-Docker hidden site/password CSV template
 
 ## Setup
 
 Run commands from the `unifi_radius_retransmit` folder.
 
-Create the local working files for Docker or native Linux/macOS Ansible mode.
+Create the local working files for Docker mode.
 
 Linux/macOS:
 
@@ -113,7 +103,7 @@ Copy-Item config/secrets.example.yaml secrets/secrets.yaml
 Copy-Item config/config.example.yaml config/config.yaml
 ```
 
-For Windows-native Python mode, skip the `config/` and `secrets/` setup below and create `.env` from `.env.windows-native.example` instead.
+For Windows without Docker, skip the `config/` and `secrets/` setup below and create `.env` plus `.sites.csv` from the Windows templates instead.
 
 Edit `config/config.yaml` with each UniFi controller name and URL. The controller `name` must match the key in `secrets/secrets.yaml`:
 
@@ -143,7 +133,7 @@ The optional `username` column is for exceptions. Leave it blank to use `ssh.use
 ```csv
 site_name,password,username
 Example Clinic,replace-with-switch-admin-password,
-Legacy Clinic,replace-with-switch-admin-password,admin
+Legacy Clinic,replace-with-switch-admin-password,switch-ssh-username
 ```
 
 Create the vault password file before encrypting any secret files. Ansible cannot create `secrets/secrets.vault` or `secrets/sites.vault` until `secrets/.vault_pass` exists:
@@ -161,113 +151,57 @@ Windows PowerShell:
 Set-Content -Path secrets/.vault_pass -Value "replace-with-a-real-vault-password" -NoNewline
 ```
 
-Choose Docker or native tooling for the remaining setup.
-
-Docker:
+Build the Docker image:
 
 ```bash
 docker compose build radius
 ```
 
-Native Linux/macOS or WSL:
-
-```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install --upgrade pip
-./.venv/bin/python -m pip install -r requirements.txt
-source .venv/bin/activate
-```
-
-Windows-native Python:
+Windows without Docker:
 
 ```cmd
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements-windows-native.txt
 copy .env.windows-native.example .env
+copy .sites.example.csv .sites.csv
 ```
 
-Edit `.env` and put all Windows-native secrets there. The `.env` file is excluded from git.
+Edit `.env` and put the Windows-without-Docker UniFi controller credentials there. Edit `.sites.csv` for the site switch credentials. Both `.env` and `.sites.csv` are excluded from git.
 
-Windows-native `.env` uses JSON values for controllers and sites:
+Windows-without-Docker `.env` example:
 
 ```text
 UNIFI_CONTROLLERS_JSON=[{"name":"controller-a","base_url":"https://192.0.2.10:8443","username":"readonly-admin@example.com","password":"change-me","mfa_secret":"","api_key":""}]
-RADIUS_SITES_JSON=[{"site_name":"Example Clinic","password":"replace-with-switch-admin-password","username":""},{"site_name":"Legacy Clinic","password":"replace-with-switch-admin-password","username":"admin"}]
+RADIUS_SITES_CSV=.sites.csv
+RADIUS_DEFAULT_USERNAME=switch-ssh-username
 ```
 
-Do not create `secrets/*.vault` for the Windows-native runner; it does not use Ansible Vault. The vault steps below are only for Docker or native Linux/macOS Ansible mode.
+Windows-without-Docker `.sites.csv` example:
 
-Encrypt the UniFi controller secrets.
-
-Linux/macOS:
-
-```bash
-ansible-vault encrypt secrets/secrets.yaml
-mv secrets/secrets.yaml secrets/secrets.vault
+```csv
+site_name,password,username
+Example Clinic,replace-with-switch-admin-password,
+Legacy Clinic,replace-with-switch-admin-password,switch-ssh-username
 ```
 
-Docker, Windows PowerShell:
+Do not create `secrets/*.vault` for the Windows-without-Docker runner; it does not use Ansible Vault. The vault steps below are only for Docker mode.
+
+Encrypt the UniFi controller secrets with the Docker container:
 
 ```powershell
 docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
 Rename-Item -Path secrets/secrets.yaml -NewName secrets.vault
 ```
 
-Windows WSL:
-
-```bash
-ansible-vault encrypt secrets/secrets.yaml
-mv secrets/secrets.yaml secrets/secrets.vault
-```
-
-Docker alternative:
-
-```bash
-docker compose run --rm radius ansible-vault encrypt secrets/secrets.yaml
-mv secrets/secrets.yaml secrets/secrets.vault
-```
-
-Encrypt the site/password/username CSV.
-
-Linux/macOS:
-
-```bash
-ansible-vault encrypt secrets/sites.csv
-mv secrets/sites.csv secrets/sites.vault
-```
-
-Docker, Windows PowerShell:
+Encrypt the site/password/username CSV with the Docker container:
 
 ```powershell
 docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
 Rename-Item -Path secrets/sites.csv -NewName sites.vault
 ```
 
-Windows WSL:
-
-```bash
-ansible-vault encrypt secrets/sites.csv
-mv secrets/sites.csv secrets/sites.vault
-```
-
-Docker alternative:
-
-```bash
-docker compose run --rm radius ansible-vault encrypt secrets/sites.csv
-mv secrets/sites.csv secrets/sites.vault
-```
-
-To edit either encrypted file later, use the same mode you used for setup.
-
-Native:
-
-```bash
-ansible-vault edit secrets/sites.vault
-ansible-vault edit secrets/secrets.vault
-```
-
-Docker:
+To edit either encrypted file later, use the Docker container:
 
 ```bash
 docker compose run --rm radius ansible-vault edit secrets/sites.vault
@@ -276,7 +210,7 @@ docker compose run --rm radius ansible-vault edit secrets/secrets.vault
 
 Ansible reads `secrets/.vault_pass` through `ansible.cfg`.
 
-Before running Docker or native Linux/macOS Ansible mode, confirm these files exist:
+Before running Docker mode, confirm these files exist:
 
 - `config/config.yaml`
 - `secrets/.vault_pass`
@@ -297,14 +231,7 @@ Docker, Windows PowerShell:
 docker compose up -d --build
 ```
 
-Native, Linux/macOS/WSL:
-
-```bash
-source .venv/bin/activate
-./scripts/run-native.sh
-```
-
-Windows-native Python:
+Windows without Docker:
 
 ```cmd
 .\.venv\Scripts\python.exe -m app.windows_native --env-file .env
@@ -318,28 +245,7 @@ Docker:
 docker compose run --rm radius python -m app.run_once
 ```
 
-Native Linux/macOS/WSL with Ansible:
-
-```bash
-source .venv/bin/activate
-./scripts/run-once-native.sh
-```
-
-Windows PowerShell through WSL, only if you are using the WSL Ansible fallback:
-
-```powershell
-wsl.exe -d Ubuntu -- bash -lc "cd /opt/radius && export PYTHONPATH=$PWD && .venv/bin/python -m app.run_once"
-```
-
-If you are already inside the WSL shell:
-
-```bash
-cd /opt/radius
-source .venv/bin/activate
-./scripts/run-once-native.sh
-```
-
-Windows-native Python:
+Windows without Docker:
 
 ```cmd
 .\.venv\Scripts\python.exe -m app.windows_native --env-file .env --once --no-metrics
@@ -347,14 +253,14 @@ Windows-native Python:
 
 The one-shot command still writes `data/last_run.json` and exits `0` on full success or `1` when any switch fails.
 
-The remediation job runs on service start by default and then daily at `scheduler.daily_at` for Ansible mode or `RADIUS_DAILY_AT` for Windows-native Python mode.
-The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone` for Ansible mode or `RADIUS_TIMEZONE` for Windows-native Python mode.
+The remediation job runs on service start by default and then daily at `scheduler.daily_at` for Docker mode or `RADIUS_DAILY_AT` for Windows without Docker.
+The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone` for Docker mode or `RADIUS_TIMEZONE` for Windows without Docker.
 
 Prometheus is available at `http://localhost:9090`.
 Grafana is available at `http://localhost:3000`.
 The job metrics endpoint is exposed at `http://localhost:9108/metrics`.
 
-In native mode, the Python service exposes `http://localhost:9108/metrics`. Prometheus and Grafana are available only if you run them separately or keep the Compose monitoring services.
+In Windows-without-Docker mode, the Python service exposes `http://localhost:9108/metrics`. Prometheus and Grafana are available only if you run them separately or keep the Compose monitoring services.
 
 The Compose stack uses a dedicated Docker bridge network on `10.254.99.0/24` to avoid Docker auto-selecting a subnet that overlaps with production site networks.
 If this subnet is changed after containers already exist, recreate the stack so Docker replaces the old network:
@@ -364,40 +270,9 @@ docker compose down
 docker compose up -d --build
 ```
 
-## Native Operation
+## Windows Without Docker
 
-Native Linux/macOS mode runs the same Python scheduler and Ansible playbook without Docker. Windows-native mode runs `app.windows_native` without Ansible. Keep either process running so the built-in scheduler can run daily.
-
-Linux systemd:
-
-1. Copy the project to `/opt/radius` or edit `deploy/systemd/radius.service` to match your install path.
-2. Install dependencies with the native setup commands.
-3. Install and start the service:
-
-```bash
-sudo cp deploy/systemd/radius.service /etc/systemd/system/radius.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now radius.service
-sudo systemctl status radius.service
-```
-
-The included `deploy/systemd/radius.timer` is optional. The service itself should stay running because `app.scheduler` owns the daily schedule.
-
-macOS launchd:
-
-1. Copy the project to `/opt/radius` or edit `deploy/launchd/com.example.radius.plist` to match your install path.
-2. Install dependencies with the native setup commands.
-3. Load the launch agent:
-
-```bash
-cp deploy/launchd/com.example.radius.plist ~/Library/LaunchAgents/com.example.radius.plist
-launchctl load ~/Library/LaunchAgents/com.example.radius.plist
-launchctl start com.example.radius
-```
-
-Windows without Docker or WSL:
-
-Use the Windows-native Python runner. It does not use Ansible or Ansible Vault; it reads `.env`, discovers switches from the UniFi controller, and uses Paramiko to connect directly to each switch.
+Use the Windows Python runner. It does not use Ansible or Ansible Vault; it reads `.env`, discovers switches from the UniFi controller, and uses Paramiko to connect directly to each switch.
 
 Install dependencies from inside `unifi_radius_retransmit`:
 
@@ -406,13 +281,14 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements-windows-native.txt
 copy .env.windows-native.example .env
+copy .sites.example.csv .sites.csv
 ```
 
-Edit `.env` with the real UniFi controller and site switch credentials:
+Edit `.env` with the real UniFi controller credentials and runtime settings:
 
 ```text
 UNIFI_CONTROLLERS_JSON=[{"name":"controller-a","base_url":"https://192.0.2.10:8443","username":"readonly-admin@example.com","password":"change-me","mfa_secret":"","api_key":""}]
-RADIUS_SITES_JSON=[{"site_name":"Example Clinic","password":"replace-with-switch-admin-password","username":""},{"site_name":"Legacy Clinic","password":"replace-with-switch-admin-password","username":"admin"}]
+RADIUS_SITES_CSV=.sites.csv
 RADIUS_DEFAULT_USERNAME=switch-ssh-username
 RADIUS_WORKERS=50
 RADIUS_TIMEZONE=America/Toronto
@@ -421,7 +297,15 @@ RADIUS_DAILY_AT=03:00
 RADIUS_METRICS_PORT=9108
 ```
 
-Leave `username` blank for sites that use `RADIUS_DEFAULT_USERNAME`. Set `username` only for site-level exceptions.
+Maintain site switch credentials in `.sites.csv`:
+
+```csv
+site_name,password,username
+Example Clinic,replace-with-switch-admin-password,
+Legacy Clinic,replace-with-switch-admin-password,switch-ssh-username
+```
+
+The `.sites.csv` file contains one row per UniFi site, not one row per switch. The script discovers switches from the UniFi controller and applies the site password to every switch in that site. Leave `username` blank for sites that use `RADIUS_DEFAULT_USERNAME`; set `username` only for site-level exceptions.
 
 Run a one-shot test without starting the scheduler:
 
@@ -435,7 +319,7 @@ Start the long-running scheduler:
 .\.venv\Scripts\python.exe -m app.windows_native --env-file .env
 ```
 
-The Windows scheduled task should be created manually in the GUI. It starts the long-running native Python scheduler at boot. The Python scheduler controls the daily run time through `RADIUS_DAILY_AT`.
+The Windows scheduled task should be created manually in the GUI. It starts the long-running Python scheduler at boot. The Python scheduler controls the daily run time through `RADIUS_DAILY_AT`.
 
 Manual Windows Task Scheduler setup:
 
@@ -478,14 +362,6 @@ C:\git\site_compliance\unifi_radius_retransmit
 
 To test the task from the GUI, right-click it and select **Run**. Check `data\last_run.json` in the project folder.
 
-Windows WSL fallback:
-
-If WSL is available on a different host later, the older WSL helper is still included:
-
-```powershell
-.\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
-```
-
 ## Troubleshooting
 
 If `data/last_run.json` shows switches as `UNREACHABLE` with messages like `connect to host ... port 22: Connection timed out`, the UniFi lookup worked but the container cannot open SSH to the switch management IPs.
@@ -516,7 +392,7 @@ docker compose run --rm radius ssh -vvv -o ConnectTimeout=10 -o StrictHostKeyChe
 
 If these fail from inside the container but work from the host PC, check Docker Desktop, VPN split tunneling, firewall policy, routing to the switch management VLANs, and whether the switches actually allow SSH from the Docker host.
 
-In native mode, run the same tools directly from the runtime host or WSL shell, for example `nc -vz -w 5 172.20.70.2 22`, `ping -c 4 172.20.70.2`, and `ip route`.
+In Windows-without-Docker mode, test connectivity directly from the Windows host, for example with `Test-NetConnection 172.20.70.2 -Port 22`.
 
 ## Grafana Login
 
@@ -576,14 +452,14 @@ Edit:
 - `secrets/secrets.vault` for UniFi controller credentials
 - `secrets/sites.vault` for site-specific switch passwords
 
-Useful native/Docker SSH setting:
+Useful Docker SSH setting:
 
 ```yaml
 ansible:
   connection: paramiko
 ```
 
-Use `paramiko` for the most portable password-based SSH behavior. Use `ssh` only when the runtime host has OpenSSH plus the required password-auth support installed.
+Use `paramiko` for the most portable password-based SSH behavior. Use `ssh` only when the Docker runtime has OpenSSH plus the required password-auth support installed.
 
 ## Metrics
 

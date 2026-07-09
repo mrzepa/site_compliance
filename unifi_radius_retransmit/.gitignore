@@ -2,3 +2,6 @@ config/config.yaml
 data/
 secrets/
 .env
+.sites.csv
+.sites.*.csv
+!.sites.example.csv

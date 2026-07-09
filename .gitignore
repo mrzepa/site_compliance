@@ -11,6 +11,7 @@ dist/
 .env
 .env.*
 !example.env
+!unifi_radius_retransmit/.env.windows-native.example
 
 reports/
 logs/

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -80,7 +81,7 @@ def load_config(env_path: str | Path) -> dict[str, Any]:
     sites = _load_sites(env)
     default_username = env.get("RADIUS_DEFAULT_USERNAME", "").strip()
     if not default_username and any(site.username is None for site in sites):
-        raise ValueError("Set RADIUS_DEFAULT_USERNAME in .env or provide username for every RADIUS_SITES_JSON entry.")
+        raise ValueError("Set RADIUS_DEFAULT_USERNAME in .env or provide username for every configured site.")
     return {
         "controllers": controllers,
         "sites": sites,
@@ -121,9 +122,12 @@ def _load_controllers(env: dict[str, str]) -> list[dict[str, Any]]:
 
 
 def _load_sites(env: dict[str, str]) -> list[SiteSecret]:
+    csv_path = env.get("RADIUS_SITES_CSV", ".sites.csv").strip()
+    if csv_path and Path(csv_path).exists():
+        return _load_sites_csv(Path(csv_path))
     raw = env.get("RADIUS_SITES_JSON")
     if not raw:
-        raise ValueError("Set RADIUS_SITES_JSON in .env.")
+        raise ValueError("Create .sites.csv, set RADIUS_SITES_CSV, or set RADIUS_SITES_JSON in .env.")
     rows = json.loads(raw)
     if not isinstance(rows, list):
         raise ValueError("RADIUS_SITES_JSON must be a JSON list.")
@@ -135,6 +139,25 @@ def _load_sites(env: dict[str, str]) -> list[SiteSecret]:
         if not site_name or not password:
             raise ValueError(f"RADIUS_SITES_JSON entry {index} is missing site_name or password.")
         sites.append(SiteSecret(site_name=site_name, password=password, username=username))
+    return sites
+
+
+def _load_sites_csv(path: Path) -> list[SiteSecret]:
+    sites: list[SiteSecret] = []
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        missing = {"site_name", "password"} - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"{path} is missing required columns: {', '.join(sorted(missing))}")
+        for index, row in enumerate(reader, start=2):
+            site_name = str(row.get("site_name") or "").strip()
+            password = str(row.get("password") or "")
+            username = str(row.get("username") or "").strip() or None
+            if not site_name or not password:
+                raise ValueError(f"{path} line {index} is missing site_name or password.")
+            sites.append(SiteSecret(site_name=site_name, password=password, username=username))
+    if not sites:
+        raise ValueError(f"{path} does not contain any sites.")
     return sites
 
 
