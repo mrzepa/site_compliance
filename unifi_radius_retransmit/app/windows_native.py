@@ -78,10 +78,13 @@ def load_config(env_path: str | Path) -> dict[str, Any]:
     env = load_env(env_path)
     controllers = _load_controllers(env)
     sites = _load_sites(env)
+    default_username = env.get("RADIUS_DEFAULT_USERNAME", "").strip()
+    if not default_username and any(site.username is None for site in sites):
+        raise ValueError("Set RADIUS_DEFAULT_USERNAME in .env or provide username for every RADIUS_SITES_JSON entry.")
     return {
         "controllers": controllers,
         "sites": sites,
-        "default_username": env.get("RADIUS_DEFAULT_USERNAME", "itvsadmin"),
+        "default_username": default_username,
         "ssh_port": int(env.get("RADIUS_SSH_PORT", "22")),
         "connect_timeout": int(env.get("RADIUS_CONNECT_TIMEOUT_SECONDS", "15")),
         "command_timeout": int(env.get("RADIUS_COMMAND_TIMEOUT_SECONDS", "60")),

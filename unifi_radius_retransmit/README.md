@@ -413,7 +413,7 @@ Edit `.env` with the real UniFi controller and site switch credentials:
 ```text
 UNIFI_CONTROLLERS_JSON=[{"name":"controller-a","base_url":"https://192.0.2.10:8443","username":"readonly-admin@example.com","password":"change-me","mfa_secret":"","api_key":""}]
 RADIUS_SITES_JSON=[{"site_name":"Example Clinic","password":"replace-with-switch-admin-password","username":""},{"site_name":"Legacy Clinic","password":"replace-with-switch-admin-password","username":"admin"}]
-RADIUS_DEFAULT_USERNAME=itvsadmin
+RADIUS_DEFAULT_USERNAME=switch-ssh-username
 RADIUS_WORKERS=50
 RADIUS_TIMEZONE=America/Toronto
 RADIUS_RUN_ON_START=true
@@ -511,7 +511,7 @@ docker compose run --rm radius ip route
 Test SSH negotiation manually:
 
 ```bash
-docker compose run --rm radius ssh -vvv -o ConnectTimeout=10 -o StrictHostKeyChecking=no itvsadmin@172.20.70.2
+docker compose run --rm radius ssh -vvv -o ConnectTimeout=10 -o StrictHostKeyChecking=no switch-ssh-username@172.20.70.2
 ```
 
 If these fail from inside the container but work from the host PC, check Docker Desktop, VPN split tunneling, firewall policy, routing to the switch management VLANs, and whether the switches actually allow SSH from the Docker host.
