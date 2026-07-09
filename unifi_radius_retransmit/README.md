@@ -3,9 +3,9 @@
 Standalone daily job that:
 
 1. Logs into one or more UniFi controllers.
-2. Resolves CSV site names to UniFi site IDs.
+2. Resolves configured site names to UniFi site IDs.
 3. Pulls all switches in each matched site.
-4. Uses Ansible SSH fan-out to run:
+4. Uses SSH fan-out to run:
 
 ```text
 radius default-config retransmit 10 timeout 30
@@ -37,8 +37,9 @@ Core requirements for every install:
 - A UniFi controller account that can list sites and devices.
 - Switch SSH enabled. The default username is set in `config/config.yaml`; site-specific username exceptions can be set in `secrets/sites.vault`.
 - One switch SSH password per UniFi site.
-- The UniFi site names in `secrets/sites.csv` must match the UniFi controller site display names.
-- UniFi controller credentials are stored in `secrets/secrets.vault`.
+- For Docker and native Linux/macOS Ansible mode, the UniFi site names in `secrets/sites.vault` must match the UniFi controller site display names.
+- For Docker and native Linux/macOS Ansible mode, UniFi controller credentials are stored in `secrets/secrets.vault`.
+- For Windows-native Python mode, UniFi controller credentials and site switch credentials are stored in `.env`.
 
 Docker requirements:
 
@@ -52,14 +53,15 @@ Native Linux/macOS requirements:
 
 Native Windows requirements:
 
-- Windows Subsystem for Linux with a Linux distribution such as Ubuntu.
-- Python 3.11 or newer inside WSL.
-- Ansible runs inside WSL. Native Windows PowerShell is useful for scheduling, but not as the Ansible control node.
+- Windows 11 Enterprise or another supported Windows release with Python 3.11 or newer.
+- No Docker, WSL, or Ansible is required for the Windows-native runner.
+- Windows-native mode uses `.env` for secrets and Paramiko for SSH fan-out.
 
 Ansible and `ansible-vault` requirements:
 
 - Docker mode runs Ansible and `ansible-vault` inside the `radius` container.
-- Native mode runs Ansible and `ansible-vault` from the local Python virtual environment.
+- Native Linux/macOS mode runs Ansible and `ansible-vault` from the local Python virtual environment.
+- Windows-native Python mode does not use Ansible or Ansible Vault.
 - The default Ansible SSH connection is `paramiko`, so native password authentication does not require `sshpass`.
 
 Monitoring and production access requirements:
@@ -81,16 +83,17 @@ Monitoring and production access requirements:
 - `app/inventory.py`: dynamic Ansible inventory builder
 - `playbooks/radius_default_config.yml`: switch SSH playbook
 - `app/scheduler.py`: daily scheduler plus Prometheus metrics endpoint
+- `app/windows_native.py`: Windows-native pure Python runner without Ansible
 - `scripts/run-native.sh`: native Linux/macOS/WSL runner
 - `deploy/systemd/`: Linux systemd templates
 - `deploy/launchd/`: macOS launchd template
-- `deploy/windows/`: Windows Task Scheduler helper for WSL
+- `deploy/windows/`: optional WSL Task Scheduler helpers
 
 ## Setup
 
 Run commands from the `unifi_radius_retransmit` folder.
 
-Create the local working files.
+Create the local working files for Docker or native Linux/macOS Ansible mode.
 
 Linux/macOS:
 
@@ -101,7 +104,7 @@ cp config/secrets.example.yaml secrets/secrets.yaml
 cp config/config.example.yaml config/config.yaml
 ```
 
-Windows PowerShell:
+Windows PowerShell for Docker mode:
 
 ```powershell
 New-Item -ItemType Directory -Force secrets
@@ -109,6 +112,8 @@ Copy-Item config/sites.example.csv secrets/sites.csv
 Copy-Item config/secrets.example.yaml secrets/secrets.yaml
 Copy-Item config/config.example.yaml config/config.yaml
 ```
+
+For Windows-native Python mode, skip the `config/` and `secrets/` setup below and create `.env` from `.env.windows-native.example` instead.
 
 Edit `config/config.yaml` with each UniFi controller name and URL. The controller `name` must match the key in `secrets/secrets.yaml`:
 
@@ -172,6 +177,26 @@ python3 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 source .venv/bin/activate
 ```
+
+Windows-native Python:
+
+```cmd
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-windows-native.txt
+copy .env.windows-native.example .env
+```
+
+Edit `.env` and put all Windows-native secrets there. The `.env` file is excluded from git.
+
+Windows-native `.env` uses JSON values for controllers and sites:
+
+```text
+UNIFI_CONTROLLERS_JSON=[{"name":"controller-a","base_url":"https://192.0.2.10:8443","username":"readonly-admin@example.com","password":"change-me","mfa_secret":"","api_key":""}]
+RADIUS_SITES_JSON=[{"site_name":"Example Clinic","password":"replace-with-switch-admin-password","username":""},{"site_name":"Legacy Clinic","password":"replace-with-switch-admin-password","username":"admin"}]
+```
+
+Do not create `secrets/*.vault` for the Windows-native runner; it does not use Ansible Vault. The vault steps below are only for Docker or native Linux/macOS Ansible mode.
 
 Encrypt the UniFi controller secrets.
 
@@ -251,7 +276,7 @@ docker compose run --rm radius ansible-vault edit secrets/secrets.vault
 
 Ansible reads `secrets/.vault_pass` through `ansible.cfg`.
 
-Before running, confirm these files exist:
+Before running Docker or native Linux/macOS Ansible mode, confirm these files exist:
 
 - `config/config.yaml`
 - `secrets/.vault_pass`
@@ -279,6 +304,12 @@ source .venv/bin/activate
 ./scripts/run-native.sh
 ```
 
+Windows-native Python:
+
+```cmd
+.\.venv\Scripts\python.exe -m app.windows_native --env-file .env
+```
+
 One-shot connectivity/remediation test without starting the scheduler:
 
 Docker:
@@ -287,14 +318,14 @@ Docker:
 docker compose run --rm radius python -m app.run_once
 ```
 
-Native Linux/macOS/WSL:
+Native Linux/macOS/WSL with Ansible:
 
 ```bash
 source .venv/bin/activate
 ./scripts/run-once-native.sh
 ```
 
-Windows PowerShell through WSL:
+Windows PowerShell through WSL, only if you are using the WSL Ansible fallback:
 
 ```powershell
 wsl.exe -d Ubuntu -- bash -lc "cd /opt/radius && export PYTHONPATH=$PWD && .venv/bin/python -m app.run_once"
@@ -308,10 +339,16 @@ source .venv/bin/activate
 ./scripts/run-once-native.sh
 ```
 
+Windows-native Python:
+
+```cmd
+.\.venv\Scripts\python.exe -m app.windows_native --env-file .env --once --no-metrics
+```
+
 The one-shot command still writes `data/last_run.json` and exits `0` on full success or `1` when any switch fails.
 
-The remediation job runs on service start by default and then daily at `scheduler.daily_at`.
-The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone`.
+The remediation job runs on service start by default and then daily at `scheduler.daily_at` for Ansible mode or `RADIUS_DAILY_AT` for Windows-native Python mode.
+The latest run summary is written to `data/last_run.json`. Its `completed_at` value is formatted as `YYYY-MM-DD HH:MM:SS TZ` using `scheduler.timezone` for Ansible mode or `RADIUS_TIMEZONE` for Windows-native Python mode.
 
 Prometheus is available at `http://localhost:9090`.
 Grafana is available at `http://localhost:3000`.
@@ -329,7 +366,7 @@ docker compose up -d --build
 
 ## Native Operation
 
-Native mode runs the same Python scheduler and Ansible playbook without Docker. Keep the process running so the built-in scheduler can run daily.
+Native Linux/macOS mode runs the same Python scheduler and Ansible playbook without Docker. Windows-native mode runs `app.windows_native` without Ansible. Keep either process running so the built-in scheduler can run daily.
 
 Linux systemd:
 
@@ -358,49 +395,47 @@ launchctl load ~/Library/LaunchAgents/com.example.radius.plist
 launchctl start com.example.radius
 ```
 
-Windows without Docker:
+Windows without Docker or WSL:
 
-Use WSL as the runtime. Ansible is not supported as a native Windows control node, so install the project and Python virtual environment inside WSL. From PowerShell, register a startup task that launches the WSL scheduler:
+Use the Windows-native Python runner. It does not use Ansible or Ansible Vault; it reads `.env`, discovers switches from the UniFi controller, and uses Paramiko to connect directly to each switch.
 
-From the repo root:
+Install dependencies from inside `unifi_radius_retransmit`:
 
-```powershell
-.\unifi_radius_retransmit\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```cmd
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-windows-native.txt
+copy .env.windows-native.example .env
 ```
 
-If PowerShell blocks script execution, use a process-scoped bypass:
+Edit `.env` with the real UniFi controller and site switch credentials:
 
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\unifi_radius_retransmit\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```text
+UNIFI_CONTROLLERS_JSON=[{"name":"controller-a","base_url":"https://192.0.2.10:8443","username":"readonly-admin@example.com","password":"change-me","mfa_secret":"","api_key":""}]
+RADIUS_SITES_JSON=[{"site_name":"Example Clinic","password":"replace-with-switch-admin-password","username":""},{"site_name":"Legacy Clinic","password":"replace-with-switch-admin-password","username":"admin"}]
+RADIUS_DEFAULT_USERNAME=itvsadmin
+RADIUS_WORKERS=50
+RADIUS_TIMEZONE=America/Toronto
+RADIUS_RUN_ON_START=true
+RADIUS_DAILY_AT=03:00
+RADIUS_METRICS_PORT=9108
 ```
 
-Or, from inside the `unifi_radius_retransmit` folder:
+Leave `username` blank for sites that use `RADIUS_DEFAULT_USERNAME`. Set `username` only for site-level exceptions.
 
-```powershell
-.\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+Run a one-shot test without starting the scheduler:
+
+```cmd
+.\.venv\Scripts\python.exe -m app.windows_native --env-file .env --once --no-metrics
 ```
 
-From inside `unifi_radius_retransmit` with execution-policy bypass:
+Start the long-running scheduler:
 
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```cmd
+.\.venv\Scripts\python.exe -m app.windows_native --env-file .env
 ```
 
-Or, from inside `unifi_radius_retransmit\deploy\windows`:
-
-```powershell
-.\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
-```
-
-From inside `unifi_radius_retransmit\deploy\windows` with execution-policy bypass:
-
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
-```
-
-The filename uses `wsl` with a lowercase letter `L`. A compatibility wrapper named `register-radius-ws1-task.ps1` is also included in case it is typed with the number `1`.
-
-The Windows scheduled task starts the long-running WSL scheduler at boot. The Python scheduler controls the daily run time through `scheduler.daily_at`.
+The Windows scheduled task should be created manually in the GUI. It starts the long-running native Python scheduler at boot. The Python scheduler controls the daily run time through `RADIUS_DAILY_AT`.
 
 Manual Windows Task Scheduler setup:
 
@@ -421,13 +456,19 @@ Manual Windows Task Scheduler setup:
    - Program/script:
 
 ```text
-wsl.exe
+C:\git\site_compliance\unifi_radius_retransmit\.venv\Scripts\python.exe
 ```
 
    - Add arguments:
 
 ```text
--d Ubuntu -- bash -lc "cd /opt/radius && export PYTHONPATH=$PWD && .venv/bin/python -m app.scheduler"
+-m app.windows_native --env-file .env
+```
+
+   - Start in:
+
+```text
+C:\git\site_compliance\unifi_radius_retransmit
 ```
 
 7. On **Settings**:
@@ -435,7 +476,15 @@ wsl.exe
    - Enable **If the task fails, restart every** and choose a retry interval such as `1 minute`.
 8. Select **OK** and enter credentials if prompted.
 
-To test the task from the GUI, right-click it and select **Run**. In WSL, check `/opt/radius/data/last_run.json`.
+To test the task from the GUI, right-click it and select **Run**. Check `data\last_run.json` in the project folder.
+
+Windows WSL fallback:
+
+If WSL is available on a different host later, the older WSL helper is still included:
+
+```powershell
+.\deploy\windows\register-radius-wsl-task.ps1 -Distro Ubuntu -WslProjectPath /opt/radius
+```
 
 ## Troubleshooting
 
@@ -543,7 +592,7 @@ Use `paramiko` for the most portable password-based SSH behavior. Use `ssh` only
 - `radius_last_run_duration_seconds`
 - `radius_switches_total`
 - `radius_switches_failed`
-- `radius_sites_missing`: count of rows in `secrets/sites.vault` whose `site_name` did not match any UniFi controller site during the last inventory lookup
+- `radius_sites_missing`: count of configured site names that did not match any UniFi controller site during the last inventory lookup
 - `radius_site_switches_total{site="..."}`
 - `radius_site_switches_success{site="..."}`
 - `radius_site_switches_failed{site="..."}`

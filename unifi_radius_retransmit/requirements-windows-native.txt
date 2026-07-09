@@ -1,0 +1,5 @@
+APScheduler==3.10.4
+paramiko==3.5.0
+prometheus-client==0.21.1
+pyotp==2.9.0
+requests==2.32.3
