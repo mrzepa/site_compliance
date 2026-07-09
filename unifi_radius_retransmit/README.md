@@ -294,6 +294,20 @@ source .venv/bin/activate
 ./scripts/run-once-native.sh
 ```
 
+Windows PowerShell through WSL:
+
+```powershell
+wsl.exe -d Ubuntu -- bash -lc "cd /opt/radius && export PYTHONPATH=$PWD && .venv/bin/python -m app.run_once"
+```
+
+If you are already inside the WSL shell:
+
+```bash
+cd /opt/radius
+source .venv/bin/activate
+./scripts/run-once-native.sh
+```
+
 The one-shot command still writes `data/last_run.json` and exits `0` on full success or `1` when any switch fails.
 
 The remediation job runs on service start by default and then daily at `scheduler.daily_at`.
